@@ -1,0 +1,266 @@
+---
+title: "Linear Mixed Effects Models"
+author: "Garance Malnoë"
+date: "2025-05-22"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("knitr")        # for knitting RMarkdown 
+library("kableExtra")   # for making nice tables
+library("janitor")      # for cleaning column names
+library("broom.mixed")  # for tidying up linear models 
+library("patchwork")    # for making figure panels
+library("lme4")         # for linear mixed effects models
+library("tidyverse")    # for wrangling, plotting, etc. 
+```
+
+```{r, echo=FALSE}
+theme_set(theme_classic() + #set the theme 
+            theme(text = element_text(size = 12))) #set the default text size
+
+opts_chunk$set(comment = "",
+               fig.show = "hold")
+```
+
+
+# First course
+
+The point of mixed effects models is to work with dependent data. Let's see an example where two observations of the same participants are dependant, shuffle it and see if it's important to take the dependance in account.
+
+```{r}
+# reproducible example
+set.seed(1)
+df.dependence = tibble(participant = 1:20,
+                       condition1 = rnorm(20),
+                       condition2 = condition1 + rnorm(20, mean = 0.2, sd = 0.1)) %>% 
+  mutate(condition2shuffled = sample(condition2)) # shuffles the condition label
+```
+
+```{r}
+# plot
+df.plot = df.dependence %>% 
+  pivot_longer(cols = -participant,
+               names_to = "condition",
+               values_to = "value") %>% 
+  mutate(condition = str_replace(condition, "condition", ""))
+
+p1 = ggplot(data = df.plot %>% 
+              filter(condition != "2shuffled"), 
+            mapping = aes(x = condition, y = value)) +
+  geom_line(aes(group = participant), alpha = 0.3) +
+  geom_point() +
+  stat_summary(fun = "mean", 
+               geom = "point",
+               shape = 21, 
+               fill = "red",
+               size = 4) +
+  labs(title = "original",
+       tag = "a)")
+
+p2 = ggplot(data = df.plot %>% 
+              filter(condition != "2"), 
+            mapping = aes(x = condition, y = value)) +
+  geom_line(aes(group = participant), alpha = 0.3) +
+  geom_point() +
+  stat_summary(fun = "mean", 
+               geom = "point",
+               shape = 21, 
+               fill = "red",
+               size = 4) +
+  labs(title = "shuffled",
+       tag = "b)")
+
+p1 + p2 
+```
+
+```{r}
+# separate the data sets 
+df.original = df.dependence %>% 
+  pivot_longer(cols = -participant,
+               names_to = "condition",
+               values_to = "value") %>% 
+  mutate(condition = str_replace(condition, "condition", "")) %>% 
+  filter(condition != "2shuffled")
+
+df.shuffled = df.dependence %>% 
+  pivot_longer(cols = -participant,
+               names_to = "condition",
+               values_to = "value") %>% 
+  mutate(condition = str_replace(condition, "condition", "")) %>% 
+  filter(condition != "2")
+```
+
+
+
+Now let's run a linear model on the original dataset and see how independent samples t-test reacts.
+```{r}
+# Assume independance and lm on the original dataset.
+lm(formula = value ~ condition, data = df.original) %>% summary()
+```
+We see from the summary that nor the intercept nor the condition2 are significants.
+```{r}
+t.test(df.original$value[df.original$condition == "1"],
+       df.original$value[df.original$condition == "2"],
+       alternative = "two.sided",
+       paired = F)
+```
+From the Welch Two Sample t-test we learn that the mean difference between the 2 conditions is small and non-significant (p.value = 0.5) in the context where we ignore the dependence in the data.
+
+Now let's see what happens if we fit a linear mixed effects model with a random intercept for each participant. We use the 'lmer' function. In that case we take in account the dependance of the data.
+```{r}
+# fit a linear mixed effects model 
+lmer(formula = value ~ condition + (1 | participant),
+     data = df.original) %>% 
+  summary()
+```
+To test for whether condition is a significant predictor, we need to use our model comparison approach:
+
+```{r}
+# fit models
+fit.compact = lmer(formula = value ~ 1 + (1 | participant),
+                   data = df.original)
+fit.augmented = lmer(formula = value ~ condition + (1 | participant),
+                     data = df.original)
+
+# compare via Chisq-test
+anova(fit.compact, fit.augmented)
+```
+We see that the AIC and BIC are smaller (good) and that the test is very significative.
+This result is identical to running a paired samples t-test:
+
+```{r}
+t.test(df.original$value[df.original$condition == "1"],
+       df.original$value[df.original$condition == "2"],
+       alternative = "two.sided",
+       paired = T)
+```
+But, unlike in the paired samples t-test, the linear mixed effects model explicitly models the variation between participants, and it’s a much more flexible approach for modeling dependence in data.
+
+Let’s fit a linear model and a linear mixed effects model to the original (non-shuffled) data.
+
+```{r}
+# model assuming independence
+fit.independent = lm(formula = value ~ 1 + condition,
+                     data = df.original)
+
+# model assuming dependence
+fit.dependent = lmer(formula = value ~ 1 + condition + (1 | participant),
+                     data = df.original)
+```
+
+
+Let's visualize the linear model's predictions 
+```{r}
+# plot with predictions by fit.independent 
+fit.independent %>% 
+  augment() %>% 
+  bind_cols(df.original %>%
+              select(participant)) %>% 
+  clean_names() %>% 
+  ggplot(data = .,
+         mapping = aes(x = condition,
+                       y = value,
+                       group = participant)) +
+  geom_point(alpha = 0.5) +
+  geom_line(alpha = 0.5) +
+  geom_point(aes(y = fitted),
+             color = "red") + 
+  geom_line(aes(y = fitted),
+            color = "red")
+```
+And the residuals
+```{r}
+set.seed(1)
+fit.independent %>% 
+  augment() %>% 
+  bind_cols(df.original %>%
+              select(participant)) %>% 
+  clean_names() %>% 
+  mutate(index = as.numeric(condition),
+         index = index + runif(n(), min = -0.3, max = 0.3)) %>% 
+  ggplot(data = .,
+         mapping = aes(x = index,
+                       y = value,
+                       group = participant,
+                       color = condition)) +
+  geom_point() + 
+  geom_smooth(method = "lm",
+              se = F,
+              formula = "y ~ 1",
+              aes(group = condition)) +
+  geom_segment(aes(xend = index,
+                   yend = fitted),
+               alpha = 0.5) +
+  scale_color_brewer(palette = "Set1") +
+  scale_x_continuous(breaks = 1:2, 
+                     labels = 1:2) +
+  labs(x = "condition") +
+  theme(legend.position = "none")
+```
+
+It's clear from the residual plot, that fitting two separate lines (or points in our case) is not doing much than just fitting one line (or point).
+
+Let's see now how are the predictions of the linear mixed effects model
+```{r}
+# plot with predictions by fit.independent 
+fit.dependent %>% 
+  augment() %>% 
+  clean_names() %>% 
+  ggplot(data = .,
+         mapping = aes(x = condition,
+                       y = value,
+                       group = participant)) +
+  geom_point(alpha = 0.5) +
+  geom_line(alpha = 0.5) +
+  geom_point(aes(y = fitted),
+             color = "red") + 
+  geom_line(aes(y = fitted),
+            color = "red")
+```
+Let's compare the residuals
+```{r}
+# linear model 
+p1 = fit.independent %>% 
+  augment() %>% 
+  clean_names() %>% 
+  ggplot(data = .,
+         mapping = aes(x = fitted,
+                       y = resid)) +
+  geom_point() +
+  coord_cartesian(ylim = c(-2.5, 2.5))
+
+# linear mixed effects model 
+p2 = fit.dependent %>% 
+  augment() %>% 
+  clean_names() %>% 
+  ggplot(data = .,
+         mapping = aes(x = fitted,
+                       y = resid)) +
+  geom_point() + 
+  coord_cartesian(ylim = c(-2.5, 2.5))
+
+p1 + p2
+```
+
+The linear of the linear mixed effects model are much smaller. Let's test whether it's statistically significant to take the individual variation into account :
+```{r}
+# fit models (without and with dependence)
+fit.compact = lm(formula = value ~ 1 + condition,
+                 data = df.original)
+
+fit.augmented = lmer(formula = value ~ 1 + condition + (1 | participant),
+                     data = df.original)
+
+# compare models
+# note: the lmer model has to be entered as the first argument
+anova(fit.augmented, fit.compact) 
+```
+Yes, the linear mixed effects model explains the data better than the linear model.
+
+
+
+
+
