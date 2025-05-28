@@ -314,7 +314,7 @@ get_credibility_intervals <- function(lm_adjusted_cred,newdata,lwr=0.025,upr=0.9
   
   # Posterior linear prediction on complete cases
   preds <- posterior_linpred(lm_adjusted_cred,
-                             newdata = newdata[complete_rows, , drop = FALSE],
+                             newdata = newdata[!is.na(newdata[,c(adversity_string)]),],
                              draws = 1000,
                              transform = TRUE)
   
@@ -326,26 +326,22 @@ get_credibility_intervals <- function(lm_adjusted_cred,newdata,lwr=0.025,upr=0.9
   # Compute credible intervals per observation (apply over columns)
   intervals <- t(apply(preds, 2, quantile, probs = c(lwr, upr)))
   # Formating the result
-  res <- data.frame(fit=c(),lwr=c(), upr=c())
+  res <- data.frame(lwr=c(), upr=c())
   counter <- 1
   # Adding NA
   for(i in 1:nrow(newdata)){
-    if(!is.na(newdata[i,1]) & !is.na(newdata[i,2])){
-      res[i,"fit"] <- mean(c(intervals[counter,1],intervals[counter,2]))
+    if(!is.na(newdata[i,1])){
       res[i,"lwr"] <- intervals[counter,1]
       res[i,"upr"] <- intervals[counter,2]
       counter <- counter + 1
     }
     else{
-      res[i,"fit"] <- NA
       res[i,"lwr"] <- NA
       res[i,"upr"] <- NA
     }
   }
   return(res)
 }
-
-
 
 
 ## Presentation ##########
@@ -444,12 +440,13 @@ groups_quantile
 # Credibility intervals
 # Predictions
 preds <- list(
-  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string, outcome_string)],lwr=0.0005,upr=0.9995),
-  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string, outcome_string)],lwr=0.005,upr=0.995),
-  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string, outcome_string)],lwr=0.025,upr=0.975),
-  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string, outcome_string)],lwr=0.05,upr=0.95),
-  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string, outcome_string)],lwr=0.125,upr=0.875)
+  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.0005,upr=0.9995),
+  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.005,upr=0.995),
+  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.025,upr=0.975),
+  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.05,upr=0.95),
+  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.125,upr=0.875)
 )
+
 
 # Names for the predictions
 names <- list(
