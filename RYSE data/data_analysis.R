@@ -151,6 +151,13 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
       plot.title = element_text(size = 10)
     )
   
+  if(lines_df$slope[[1]] < 0){
+    plot <-plot + geom_text(x=max(na.omit(df[[adversity]]))-5,y=max(na.omit(df[[outcome]]))-5,label="Resilient",alpha=0.2,color="grey") + geom_text(x=min(na.omit(df[[adversity]]))+5,y=min(na.omit(df[[outcome]]))+5,label="Vulnerable",alpha=0.2,color="grey")
+  }
+  else{
+    plot <- plot + geom_text(x=min(na.omit(df[[adversity]]))+5,y=max(na.omit(df[[outcome]]))-5,label="Vulnerable",alpha=0.2,color="grey") + geom_text(x=max(na.omit(df[[adversity]]))-5,y=min(na.omit(df[[outcome]]))+5,label="Resilient",alpha=0.2,color="grey")
+  }
+  
   return(list(plot=plot,
          influencers_indices=original_indices,
          lm_adjusted=lm_adjusted,
@@ -231,41 +238,59 @@ get_groups_confidence <- function(actual, pred,is_resilience_positive=FALSE) {
 }
 
 # Visualization of the intervals
-visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_lm, preds,labels,main="Intervals"){
-  # Coefficients of the adjusted liner model
+visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_lm, preds, labels, main = "Intervals") {
+  # Adjusted linear model coefficients
   intercept <- coef(adjusted_lm)[1]
   slope     <- coef(adjusted_lm)[2]
   
-  # Points and regression line
+  # Base graph with points and regression line
   plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]])) +
     geom_point() +
-    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "solid")+
+    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "solid") +
     labs(
       x = adversity,
       y = outcome,
-      title = main
+      title = main,
+      fill = "Interval"
     ) +
-    theme_minimal(base_size = 12) +
-    theme(
-      plot.title = element_text(size = 10)
-    )
+    theme_minimal(base_size = 10) +
+    theme(plot.title = element_text(size = 10))
   
-  colors <- list("indianred4","indianred2","indianred","skyblue3","skyblue1")
-  # Ribbons for prediction
-  for(i in seq_along(preds)){
+  # Combine all intervals in one dataframe
+  all_preds <- do.call(rbind, lapply(seq_along(preds), function(i) {
     pred <- preds[[i]]
     pred[[outcome]]   <- df[[outcome]]
     pred[[adversity]] <- df[[adversity]]
-    pred <- pred[order(pred[[adversity]]),]
-    
-    plot <- plot + 
-      geom_ribbon(data = pred, 
-                  aes(x = .data[[adversity]], ymin = lwr, ymax = upr), 
-                  fill = colors[i], alpha = 0.4, inherit.aes = FALSE)
+    pred$label <- labels[i]
+    pred
+  }))
+  all_preds$label <- factor(all_preds$label, levels = labels)
+  
+  # Ribbons with legend for each interval
+  plot <- plot +
+    geom_ribbon(
+      data = all_preds,
+      aes(
+        x = .data[[adversity]],
+        ymin = lwr,
+        ymax = upr,
+        fill = label,
+        group = label
+      ),
+      alpha = 0.4,
+      inherit.aes = FALSE
+    )
+  
+  if(slope < 0){
+    plot <-plot + geom_text(x=max(na.omit(df[[adversity]]))-5,y=max(na.omit(df[[outcome]]))-5,label="Resilient",alpha=0.2,color="grey") + geom_text(x=min(na.omit(df[[adversity]]))+5,y=min(na.omit(df[[outcome]]))+5,label="Vulnerable",alpha=0.2,color="grey")
+  }
+  else{
+    plot <- plot + geom_text(x=min(na.omit(df[[adversity]]))+5,y=max(na.omit(df[[outcome]]))-5,label="Vulnerable",alpha=0.2,color="grey") + geom_text(x=max(na.omit(df[[adversity]]))-5,y=min(na.omit(df[[outcome]]))+5,label="Resilient",alpha=0.2,color="grey")
   }
   
   return(plot)
 }
+
 
 ## Quantile residuals : ####
 # We want the quantile_sub lowest residuals and quantile_sup biggest residuals
@@ -354,12 +379,12 @@ resilience_sign <- FALSE
 res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 
 # Example 2
-#df <- df_CA
-#adversity_string <- "T1_CPTS"
-#outcome_string <- "T1_WES_total"
-#outcome <- df_CA$T1_WES_total
-#resilience_sign <- TRUE
-#res <- adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
+df <- df_CA
+adversity_string <- "T1_CPTS"
+outcome_string <- "T1_WES_total"
+outcome <- df_CA$T1_WES_total
+resilience_sign <- TRUE
+res <- adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
 
 # Get the info
 lm_adjusted <- res$lm_adjusted
@@ -373,7 +398,7 @@ df_n_groups <- data.frame(resilient = sum(groups_raw=="resilient", na.rm=TRUE), 
 
 # Confidence intervals
 # Prediction
-preds <- list(
+preds_conf <- list(
   as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.75)),
   as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.6)),
   as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.5)),
@@ -382,7 +407,7 @@ preds <- list(
 )
 
 # Names for the predictions
-names <- list(
+names_conf <- list(
   "pred. residuals (75%)",
   "pred. residuals (60%)",
   "pred. residuals (50%)",
@@ -392,14 +417,13 @@ names <- list(
 
 # Get groups and update df_n_groups
 groups_confidence <- list()
-for(i in 1:length(preds)){
-  groups <- get_groups_confidence(outcome, preds[[i]],is_resilience_positive=resilience_sign)
-  groups_confidence[[ names[[i]] ]] <- groups
+for(i in 1:length(preds_conf)){
+  groups <- get_groups_confidence(outcome, preds_conf[[i]],is_resilience_positive=resilience_sign)
+  groups_confidence[[ names_conf[[i]] ]] <- groups
   df_n_groups <- rbind(df_n_groups,
-                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names[[i]])))
+                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_conf[[i]])))
 }
-
-visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds,names,main="Confidence intervals (blue=confidence, red=prediction)")
+visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
 
 
 # Quantiles
@@ -425,50 +449,49 @@ for(i in 1:length(list_quantile_sub)){
 }
 
 
-
-# Results
-View(df_n_groups)
-groups_raw
-groups_confidence
-groups_quantile
-
-
-
-###### NOT DONE YET - DON'T RUN #######
-
-
 # Credibility intervals
 # Predictions
-preds <- list(
+preds_cred <- list(
   get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.0005,upr=0.9995),
   get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.005,upr=0.995),
   get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.025,upr=0.975),
   get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.05,upr=0.95),
-  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.125,upr=0.875)
+  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.125,upr=0.875),
+  get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.25,upr=0.75)
 )
 
 
 # Names for the predictions
-names <- list(
+names_cred <- list(
   "cred. 99.9%",
   "cred. 99%",
   "cred. 95%",
   "cred. 90%",
-  "cred. 75%"
+  "cred. 75%",
+  "cred. 50%"
 )
 
 # Get groups and update df_n_groups
 groups_credibility <- list()
-for(i in 1:length(preds)){
-  groups <- get_groups_confidence(outcome, preds[[i]],is_resilience_positive=resilience_sign)
-  groups_credibility[[ names[[i]] ]] <- groups
+for(i in 1:length(preds_cred)){
+  groups <- get_groups_confidence(outcome, preds_cred[[i]],is_resilience_positive=resilience_sign)
+  groups_credibility[[ names_cred[[i]] ]] <- groups
   df_n_groups <- rbind(df_n_groups,
-                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names[[i]])))
+                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_cred[[i]])))
 }
+visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_cred,names_cred,main="Credibility intervals")
 
+
+
+## Results
+View(df_n_groups)
+groups_raw
+groups_confidence
+groups_quantile
 groups_credibility
 
-visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds,names,main="Credibility intervals")
+
+###### NOT DONE YET - DON'T RUN #######
 
 
 ## Standard Deviation residuals : ####
