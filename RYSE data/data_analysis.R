@@ -212,6 +212,31 @@ get_groups_residuals <- function(residuals,is_resilience_positive=FALSE){
   return(res_list)
 }
 
+visualization_raw_residuals <- function(df, adversity, outcome, adjusted_lm, groups, main = "Groups using raw residuals") {
+  
+  # Adjusted linear regression coefficient for the plot
+  intercept <- coef(adjusted_lm)[1]
+  slope     <- coef(adjusted_lm)[2]
+  
+  # Add groups to the temporary df to color the points
+  df$group <- factor(groups, levels = c("resilient", "average", "vulnerable"))
+  
+  # Viz
+  plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]], color = group)) +
+    geom_point(shape=1,size=0.8) +
+    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "dashed") +
+    labs(
+      x = adversity,
+      y = outcome,
+      title = main,
+      color = "Group"
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(plot.title = element_text(size = 10))
+  
+  return(plot)
+}
+
 ## Confidence residuals : ######
 
 # Predictions to get the lower and upper bounds for confidence intervals
@@ -254,7 +279,7 @@ visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_
   
   # Base graph with points and regression line
   plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]])) +
-    geom_point() +
+    geom_point(shape=1,size=0.8) +
     geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "solid") +
     labs(
       x = adversity,
@@ -377,21 +402,137 @@ get_credibility_intervals <- function(lm_adjusted_cred,newdata,lwr=0.025,upr=0.9
   return(res)
 }
 
+## Standard deviation ########
+get_groups_sd <- function(df, residuals, bins, adversity_string, is_resilience_positive, sd_multiplicator=1){
+  res_SD <- c()
+  bin_labels <- rep(NA, nrow(df))  # To stock the bin of each line.
+  
+  # Calculate the SD for each bin
+  for (i in 1:(length(bins) - 1)) {
+    in_bin <- df[[adversity_string]] > bins[i] & df[[adversity_string]] < bins[i + 1]
+    
+    bin_labels[in_bin] <- i #We save the i indice of the bin for each line that's in the bin
+    
+    residuals_bin <- residuals[in_bin]
+    res_SD[i] <- sd(residuals_bin, na.rm = TRUE)
+  }
+  
+  # Flag each residual as resilient, average or vulnerable
+  groups_sd <- rep(NA, nrow(df))
+  
+  for (i in seq_along(residuals)) {
+    bin_i <- bin_labels[i]
+    
+    # Skip if bin or residual is NA
+    if (is.na(bin_i) || is.na(residuals[i])) next
+    
+    # Recuperate the SD for the bin and the residual of the current point
+    sd_i <- res_SD[bin_i]*sd_multiplicator
+    res <- residuals[i]
+    
+    # Look at the value of the residuals with respect to the SD
+    if (abs(res) <= sd_i) {
+      groups_sd[i] <- "average"
+    }
+    # Bigger residual -> resilient
+    else if(is_resilience_positive){
+      if (res > sd_i) {
+        groups_sd[i] <- "resilient"
+      } else if (res < -sd_i) {
+        groups_sd[i] <- "vulnerable"
+      }
+    }
+    # Bigger residual -> vulnerable
+    else{
+      if (res > sd_i) {
+        groups_sd[i] <- "vulnerable"
+      } 
+      else if (res < -sd_i) {
+        groups_sd[i] <- "resilient"
+      }
+    }
+  }
+  return(list(groups_sd=groups_sd,res_SD=res_SD*sd_multiplicator))
+}
+
+visualization_sd_intervals <- function(df,adversity,outcome,adjusted_lm,bins,res,main="SD Intervals"){
+  # Adjusted linear model coefficients
+  intercept <- coef(adjusted_lm)[1]
+  slope     <- coef(adjusted_lm)[2]
+  
+  # Base graph with points and regression line
+  plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]])) +
+    geom_point(shape=1,size=0.8) +
+    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "solid") +
+    labs(
+      x = adversity,
+      y = outcome,
+      title = main,
+      fill = "Interval"
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(plot.title = element_text(size = 10))
+  
+  # Color the area for each result
+  all_polygons <- data.frame()
+  
+  for (i in seq_along(res)){
+    res_SD <- res[[i]]$res_SD
+    for(j in 1:(length(bins)-1)){
+      point_j <- bins[[j]]
+      point_j1 <- bins[[j+1]]
+      fit_j <- intercept + slope * point_j
+      fit_j1 <- intercept + slope * point_j1
+      sd_j <- res_SD[[j]]
+      
+      
+      df_area <- data.frame(
+        x = c(point_j, point_j, point_j1, point_j1),
+        y = c(fit_j - sd_j, fit_j + sd_j, fit_j1 + sd_j, fit_j1 - sd_j),
+        group = paste0("poly_", i, "_", j),
+        fill_factor = names_sd[[i]]
+      )
+      
+      all_polygons <- rbind(all_polygons, df_area)
+    }
+  }
+  
+  # Add polygons to the main plot
+  plot <- plot +
+    geom_polygon(data = all_polygons, aes(x = x, y = y, group = group, fill = fill_factor), alpha = 0.3, color = NA) +
+    scale_fill_manual(values = c("2SD" = "lightblue", "1SD" = "skyblue2", "0.5SD" = "deepskyblue3"))
+  
+  
+  # Add resilient and vulnerable text
+  if(slope < 0){
+    plot <-plot + geom_text(x=max(na.omit(df[[adversity]]))-5,y=max(na.omit(df[[outcome]]))-5,label="Resilient",alpha=0.2,color="grey") + geom_text(x=min(na.omit(df[[adversity]]))+5,y=min(na.omit(df[[outcome]]))+5,label="Vulnerable",alpha=0.2,color="grey")
+  }
+  else{
+    plot <- plot + geom_text(x=min(na.omit(df[[adversity]]))+5,y=max(na.omit(df[[outcome]]))-5,label="Vulnerable",alpha=0.2,color="grey") + geom_text(x=max(na.omit(df[[adversity]]))-5,y=min(na.omit(df[[outcome]]))+5,label="Resilient",alpha=0.2,color="grey")
+  }
+  
+  return(plot)
+  
+}
+
 
 ## Presentation ##########
-# Example 1
-df <- df_CA
-adversity_string <- "T1_CPTS"
-outcome_string <- "T1_BDI_II"
-outcome <- df_CA$T1_BDI_II
-res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 
 # Example 2
 df <- df_CA
 adversity_string <- "T1_CPTS"
 outcome_string <- "T1_WES_total"
 outcome <- df_CA$T1_WES_total
+bins <- c(20, 32, 45, 60, 80)
 res <- adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
+
+# Example 1
+df <- df_CA
+adversity_string <- "T1_CPTS"
+outcome_string <- "T1_BDI_II"
+outcome <- df_CA$T1_BDI_II
+bins <- c(20, 32, 45, 60, 80,100)
+res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 
 # Get the info
 lm_adjusted <- res$lm_adjusted
@@ -487,7 +628,21 @@ for(i in 1:length(preds_cred)){
                        data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_cred[[i]])))
 }
 
-## Results
+# Standard deviation
+list_sd_multiplicator <- list(2,1,0.5)
+names_sd <- list("2SD","1SD","0.5SD")
+
+groups_sd <- list()
+res <- list()
+for(i in 1:length(list_sd_multiplicator)){
+  res[[i]] <- get_groups_sd(df, residuals, bins, adversity_string, resilience_sign, sd_multiplicator=list_sd_multiplicator[[i]])
+  groups <- res[[i]]$groups_sd
+  groups_sd[[ names_sd[[i]] ]] <- groups
+  df_n_groups <- rbind(df_n_groups,
+                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_sd[[i]])))
+}
+
+## Presentation results #########
 # Cardinal of each group
 View(df_n_groups)
 
@@ -496,54 +651,14 @@ groups_raw
 groups_confidence
 groups_quantile
 groups_credibility
+groups_sd
 
-# Visualization
+# Visualizations
+visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,groups_raw)
 visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
 qqnorm(residuals)
 qqline(residuals)
 visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_cred,names_cred,main="Credibility intervals")
+visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
 
-
-
-###### NOT DONE YET - DON'T RUN #######
-
-
-## Standard Deviation residuals : ####
-CPTS_bins <- c(20, 32, 45, 60, 80, 100)
-res_SD <- c()
-bin_labels <- rep(NA, nrow(df))  # To stock the bin of each line.
-
-# Calculate the SD for each bin
-for (i in 1:(length(CPTS_bins) - 1)) {
-  in_bin <- df[[adversity_string]] > CPTS_bins[i] & df[[adversity_string]] < CPTS_bins[i + 1]
-  
-  bin_labels[in_bin] <- i #We save the i indice of the bin for each line that's in the bin
-  
-  residuals_bin <- residuals[in_bin]
-  res_SD[i] <- sd(residuals_bin, na.rm = TRUE)
-}
-
-groups_sd <- rep(NA, nrow(df))
-
-for (i in seq_along(residuals)) {
-  bin_i <- bin_labels[i]
-  
-  # Skip if bin or residual is NA
-  if (is.na(bin_i) || is.na(residuals[i])) next
-  
-  sd_i <- res_SD[bin_i]
-  res <- residuals[i]
-  
-  if (abs(res) <= sd_i) {
-    groups_sd[i] <- "average"
-  } else if (res > sd_i) {
-    groups_sd[i] <- "resilient"
-  } else if (res < -sd_i) {
-    groups_sd[i] <- "vulnerable"
-  }
-}
-
-groups_sd
-df_n_groups <- rbind(df_n_groups,
-                     data.frame(resilient = sum(groups_sd=="resilient", na.rm=TRUE), average = sum(groups_sd=="average", na.rm=TRUE), vulnerable = sum(groups_sd=="vulnerable", na.rm=TRUE), row.names=c("SD 1")))
 
