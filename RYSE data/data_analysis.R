@@ -181,51 +181,65 @@ adjusted_fit(df=df_SA,adversity="T2_CPTS",outcome="T2_BDI_II",main="Adjusted and
 # Many more possibilities of crossing...
 
 ## Groups : Resilient, average, vulnerable ########
-# Get a result
-res <- adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for Canada at T1",xlab="CPTS",ylab="BDI-II")
+# Get an example result
+df <- df_CA
+adversity_string <- "T1_CPTS"
+outcome_string <- "T1_BDI_II"
+outcome <- df_CA$T1_BDI_II
+
+res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 
 lm_adjusted <- res$lm_adjusted
 lm_adjusted_cred <- res$lm_adjusted_cred
 residuals <- res$residuals_adjusted
 plot <- res$plot
 
+
 ## Raw residuals : #######
-df_groups <- data.frame(resilient = sum(residuals<0, na.rm=TRUE), average = sum(residuals==0, na.rm=TRUE), vulnerable = sum(residuals>0, na.rm=TRUE), row.names=c("raw residuals"))
+get_groups_residuals <- function(residuals){
+  res_list <- list()
+  for(i in 1:length(residuals)){
+    res_list[i] <- if(is.na(residuals[i])){NA}else{if(residuals[i]<0){"resilient"}else{if(residuals[i]==0){"average"}else{"vulnerable"}}}
+  }
+  return(res_list)
+}
+
+groups_raw <- get_groups_residuals(residuals)
+df_n_groups <- data.frame(resilient = sum(groups_raw=="resilient", na.rm=TRUE), average = sum(groups_raw=="average", na.rm=TRUE), vulnerable = sum(groups_raw=="vulnerable", na.rm=TRUE), row.names=c("raw residuals"))
 
 ## Confidence residuals : ######
 
 # Predictions to get the lower and upper bounds for confidence intervals
 # Two possibilities : confidence (x% sure for the mean value) or prediction (x% sure for an observation)
 
-groups_from_prediction <- function(df_groups, actual, preds, names){
-  for(i in 1:length(preds)){
-    pred <- preds[[i]]
-    
-    resilient_conf  <- actual < pred$lwr
-    vulnerable_conf <- actual > pred$upr
-    average_conf    <- actual >= pred$lwr & actual <= pred$upr
-    
-    df_groups <- rbind(df_groups,
-                       data.frame(
-                         resilient  = sum(resilient_conf, na.rm = TRUE),
-                         average    = sum(average_conf, na.rm = TRUE),
-                         vulnerable = sum(vulnerable_conf, na.rm = TRUE),
-                         row.names  = names[[i]]
-                       ))
+# Function to return groups based on confidence intervals
+get_groups_confidence <- function(actual, pred) {
+  groups <- vector("character", length(actual))
+  for (i in 1:length(actual)) {
+    # Handle any NA values
+    if (is.na(actual[i]) || is.na(pred$lwr[i]) || is.na(pred$upr[i])) {
+      groups[i] <- NA
+    } else if (actual[i] < pred$lwr[i]) {
+      groups[i] <- "resilient"
+    } else if (actual[i] > pred$upr[i]) {
+      groups[i] <- "vulnerable"
+    } else {
+      groups[i] <- "average"
+    }
   }
-  return(df_groups)
+  return(groups)
 }
 
-
-actual <- df_CA$T1_BDI_II
+# Prediction
 preds <- list(
-  
-  as.data.frame(predict(lm_adjusted, newdata = df_CA, interval = "prediction", level = 0.75)),
-  as.data.frame(predict(lm_adjusted, newdata = df_CA, interval = "prediction", level = 0.6)),
-  as.data.frame(predict(lm_adjusted, newdata = df_CA, interval = "prediction", level = 0.5)),
-  as.data.frame(predict(lm_adjusted, newdata = df_CA, interval = "confidence", level = 0.99)),
-  as.data.frame(predict(lm_adjusted, newdata = df_CA, interval = "confidence", level = 0.95))
+  as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.75)),
+  as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.6)),
+  as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.5)),
+  as.data.frame(predict(lm_adjusted, newdata = df, interval = "confidence", level = 0.99)),
+  as.data.frame(predict(lm_adjusted, newdata = df, interval = "confidence", level = 0.95))
 )
+
+# Names for the predictions
 names <- list(
   "pred. residuals (75%)",
   "pred. residuals (60%)",
@@ -234,7 +248,14 @@ names <- list(
   "conf. residuals (95%)"
 )
 
-df_groups <- groups_from_prediction(df_groups, actual, preds, names)
+# List of groups for each interval of confidence or prediction and update df_n_groups
+groups_confidence <- list()
+for(i in 1:length(preds)){
+  groups <- get_groups_confidence(outcome, preds[[i]])
+  groups_confidence[[ names[[i]] ]] <- groups
+  df_n_groups <- rbind(df_n_groups,
+                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names[[i]])))
+}
 
 # Visualization of the intervals
 visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_lm, preds,labels){
@@ -272,25 +293,77 @@ visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_
   return(plot)
 }
 
-visualisation_confidence_intervals(df=df_CA,adversity="T1_CPTS",outcome="T1_BDI_II",adjusted_lm =lm_adjusted,preds,names)
+visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds,names)
+
+## Quantile residuals : ####
+# We want the quantile_sub lowest residuals and quantile_sup biggest residuals
+get_groups_quantile <- function(residuals,quantile_sub,quantile_sup){
+  n <- sum(!is.na(residuals))
+  n_sub <- trunc(n*quantile_sub)
+  n_sup <- trunc(n*quantile_sup)
+  index_ordered_residuals <- order(residuals)
+  
+  res <- rep(NA, length(residuals))
+  res[!is.na(residuals)] <- "average"
+  # Lowest residuals -> resilient
+  for(i in 1:n_sub){
+    index <- index_ordered_residuals[i]
+    res[[index]] <- "resilient"
+  }
+  # Biggest residuals -> vulnerable
+  for(i in n:(n-n_sup)){
+    index <- index_ordered_residuals[i]
+    res[[index]] <- "vulnerable"
+  }
+  return(res)
+}
+
+# Quantile values -> Can be asymetric (looking at the QQ-plot ?)
+list_quantile_sub <- list(0.05,0.1,0.15,0.25)
+list_quantile_sup <- list(0.05,0.1,0.15,0.25)
+
+# Names
+names <- list(
+  "quantiles (5%)",
+  "quantiles (10%)",
+  "quantiles (15%)",
+  "quantiles (25%)"
+)
+
+# List of groups for each interval of confidence or prediction and update df_n_groups
+groups_quantile <- list()
+for(i in 1:length(list_quantile_sub)){
+  groups <- get_groups_quantile(residuals,list_quantile_sub[[i]],list_quantile_sup[[i]])
+  groups_quantile[[ names[[i]] ]] <- groups
+  df_n_groups <- rbind(df_n_groups,
+                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names[[i]])))
+}
+
+
+##### Presentation tools #####
+View(df_n_groups)
+groups_raw
+groups_confidence
+groups_quantile
 
 
 
+
+###### NOT DONE YET - DON'T RUN #######
 ## Credibility residuals : ##########
 # We can do the same with a bayesian approach with a credibility interval (for the mean and for predicted values)
-###### NOT DONE YET - DON'T RUN #######
 
 preds <- list(
-  predict(lm_adjusted_cred, newdata = df_CA, probs = c(0.125, 0.875)),  # ≈ 75% interval
-  predict(lm_adjusted_cred, newdata = df_CA, probs = c(0.2, 0.8)),      # ≈ 60%
-  predict(lm_adjusted_cred, newdata = df_CA, probs = c(0.25, 0.75)),    # ≈ 50%
-  fitted(lm_adjusted_cred, newdata = df_CA, probs = c(0.005, 0.995)),   # ≈ 99% credible for mean
-  fitted(lm_adjusted_cred, newdata = df_CA, probs = c(0.025, 0.975))    # ≈ 95% credible for mean
+  predict(lm_adjusted_cred, newdata = df, probs = c(0.125, 0.875)),  # ≈ 75% interval
+  predict(lm_adjusted_cred, newdata = df, probs = c(0.2, 0.8)),      # ≈ 60%
+  predict(lm_adjusted_cred, newdata = df, probs = c(0.25, 0.75)),    # ≈ 50%
+  fitted(lm_adjusted_cred, newdata = df, probs = c(0.005, 0.995)),   # ≈ 99% credible for mean
+  fitted(lm_adjusted_cred, newdata = df, probs = c(0.025, 0.975))    # ≈ 95% credible for mean
 )
 
 # Rename to use the function that already exists
 preds <- lapply(preds, function(df) {
-  names(df)[grepl("^Q[0-9.]+", names(df))] <- c("lwr", "upr")
+  names(df)<- c("lwr", "upr")
   df
 })
 
@@ -302,13 +375,8 @@ names <- list(
   "posterior mean (95%)"
 )
 
-df_groups <- groups_from_prediction(df_groups, actual, preds, names)
+df_n_groups <- cardinal_groups_from_prediction(df_n_groups, outcome, preds, names)
 
 
 ## Standard Deviation residuals : ####
-
-## Quantile residuals : ####
-
-
-
 
