@@ -1,13 +1,17 @@
 # Cross-sectional data analysis of the data from the RYSE study.
 
 ## Packages : ######
+library(car)
 library(dplyr)
 library(ggplot2)
 library(haven)
+library(lmtest)
 library(olsrr)
 library(rstanarm)
+library(sandwich)
 
 ## Import master dataset : #####
+setwd("~/Ecole/M1/Stage/Internship_repo/RYSE data")
 RYSE_master_dataset <- read_sav("RYSE_master_dataset_08082022.sav")
 
 ## Separation of the dataset : Canada (CA) and South Africa (SA) : ####
@@ -102,8 +106,13 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
   predicted_all <- predict(lm_adjusted, newdata = df)
   residuals_all <- df[[outcome]] - predicted_all
   
+  # Tests of the residuals
+  print(shapiro.test(residuals_all)) # Normality of residuals
+  print(durbinWatsonTest(lm_adjusted)) # Auto-correlation of residuals
+  print(bptest(lm_adjusted)) # Homoscedasticity
+  
   # Bayesian glm for credibility intervals
-  lm_adjusted_cred <- stan_glm(as.formula(paste(outcome, "~", adversity)), data = df)
+  lm_adjusted_cred <- stan_glm(as.formula(paste(outcome, "~", adversity)), data = df,refresh=0)
   
   # Plot
   # Influencer binary value to plot
@@ -375,7 +384,6 @@ df <- df_CA
 adversity_string <- "T1_CPTS"
 outcome_string <- "T1_BDI_II"
 outcome <- df_CA$T1_BDI_II
-resilience_sign <- FALSE
 res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 
 # Example 2
@@ -383,7 +391,6 @@ df <- df_CA
 adversity_string <- "T1_CPTS"
 outcome_string <- "T1_WES_total"
 outcome <- df_CA$T1_WES_total
-resilience_sign <- TRUE
 res <- adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
 
 # Get the info
@@ -391,6 +398,7 @@ lm_adjusted <- res$lm_adjusted
 lm_adjusted_cred <- res$lm_adjusted_cred
 residuals <- res$residuals_adjusted
 plot <- res$plot
+resilience_sign <- lm_adjusted$coefficients[2]<0
 
 # Raw residuals
 groups_raw <- get_groups_residuals(residuals,is_resilience_positive=resilience_sign)
@@ -423,7 +431,6 @@ for(i in 1:length(preds_conf)){
   df_n_groups <- rbind(df_n_groups,
                        data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_conf[[i]])))
 }
-visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
 
 
 # Quantiles
@@ -479,20 +486,64 @@ for(i in 1:length(preds_cred)){
   df_n_groups <- rbind(df_n_groups,
                        data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_cred[[i]])))
 }
-visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_cred,names_cred,main="Credibility intervals")
-
-
 
 ## Results
+# Cardinal of each group
 View(df_n_groups)
+
+# Groups
 groups_raw
 groups_confidence
 groups_quantile
 groups_credibility
+
+# Visualization
+visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
+qqnorm(residuals)
+qqline(residuals)
+visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_cred,names_cred,main="Credibility intervals")
+
 
 
 ###### NOT DONE YET - DON'T RUN #######
 
 
 ## Standard Deviation residuals : ####
+CPTS_bins <- c(20, 32, 45, 60, 80, 100)
+res_SD <- c()
+bin_labels <- rep(NA, nrow(df))  # To stock the bin of each line.
+
+# Calculate the SD for each bin
+for (i in 1:(length(CPTS_bins) - 1)) {
+  in_bin <- df[[adversity_string]] > CPTS_bins[i] & df[[adversity_string]] < CPTS_bins[i + 1]
+  
+  bin_labels[in_bin] <- i #We save the i indice of the bin for each line that's in the bin
+  
+  residuals_bin <- residuals[in_bin]
+  res_SD[i] <- sd(residuals_bin, na.rm = TRUE)
+}
+
+groups_sd <- rep(NA, nrow(df))
+
+for (i in seq_along(residuals)) {
+  bin_i <- bin_labels[i]
+  
+  # Skip if bin or residual is NA
+  if (is.na(bin_i) || is.na(residuals[i])) next
+  
+  sd_i <- res_SD[bin_i]
+  res <- residuals[i]
+  
+  if (abs(res) <= sd_i) {
+    groups_sd[i] <- "average"
+  } else if (res > sd_i) {
+    groups_sd[i] <- "resilient"
+  } else if (res < -sd_i) {
+    groups_sd[i] <- "vulnerable"
+  }
+}
+
+groups_sd
+df_n_groups <- rbind(df_n_groups,
+                     data.frame(resilient = sum(groups_sd=="resilient", na.rm=TRUE), average = sum(groups_sd=="average", na.rm=TRUE), vulnerable = sum(groups_sd=="vulnerable", na.rm=TRUE), row.names=c("SD 1")))
 
