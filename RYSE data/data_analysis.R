@@ -49,32 +49,38 @@ df_SA <- RYSE_master_dataset[RYSE_master_dataset$Country==2
 
 ### BDI-II Depression : SA and CA -> T1, T1A, T2
 # Values : 0 to 63
+bins_BDI_II <- c(0,14,20,26,63)
 #T1_BDI_II
 #T1a_BDI_II
 #T2_BDI_II
 
 ### CPTS Childhood Post-traumatic Stress : SA and CA -> T1, T1A, T2
 # Values : 20 to 100
+bins_CPTS <- c(20, 32, 45, 60, 80,100)
 #T1_CPTS
 #T1a_CPTS
 #T2_CPTS
 
 ### FAS Family adversity : SA and CA -> T1, T2
 # Values : 0 to 9
+bins_FAS <- c(0,4,9)
 #T1_FAS
 #T2_FAS
 
 ### PSS Perceived Stress : CA -> T2
 # Values : 10 to 50
+bins_PSS <- c(10,24,37,50)
 #T2_CA_PSS
 
 ### VbC Community victimisation : SA and CA
 # Values : 4 to 20
+bins_VbC <- c(4,8,12,16,20)
 #T1_VbC
 #T2_VbC
 
 ### PoNS Perception of neighborhood : SA and CA
 # Values : 8 to 32
+bins_PoNS <- c(8,16,24,32)
 #T1_PoNS
 #T2_PoNS
 
@@ -123,10 +129,12 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
   # Lines
   lines_df <- data.frame(
     intercept = c(coef(lm_unadjusted)[1],
-                  coef(lm_adjusted)[1]),
+                  coef(lm_adjusted)[1],
+                  coef(lm_adjusted_cred)[1]),
     slope = c(coef(lm_unadjusted)[2],
-              coef(lm_adjusted)[2]),
-    model = c("Unadjusted", "Adjusted")
+              coef(lm_adjusted)[2],
+              coef(lm_adjusted_cred)[2]),
+    model = c("Unadjusted", "Adjusted","Adjusted Bayes")
   )
   
   
@@ -142,8 +150,9 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
                 size = 0.8)+
     
     # Legend
-    scale_color_manual(values = c("Unadjusted" = "skyblue",
-                                  "Adjusted" = "forestgreen"),
+    scale_color_manual(values = c("Unadjusted" = "deepskyblue3",
+                                  "Adjusted" = "aquamarine3",
+                                  "Adjusted Bayes" = "slateblue2"),
                        name="Model") +
     
     scale_shape_manual(values = c(`FALSE` = 1, `TRUE` = 16),
@@ -174,7 +183,7 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
          residuals_adjusted=residuals_all))
 }
 
-## Results : ###########
+## Adjusted fit pres : ###########
 
 # CPTS explaining WES
 adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
@@ -199,7 +208,7 @@ adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and
 ## Groups : Resilient, average, vulnerable ########
 
 ## Raw residuals : #######
-get_groups_residuals <- function(residuals,is_resilience_positive=FALSE){
+get_groups_raw_residuals <- function(residuals,is_resilience_positive=FALSE){
   res_list <- list()
   for(i in 1:length(residuals)){
     if(is_resilience_positive){
@@ -243,7 +252,7 @@ visualization_raw_residuals <- function(df, adversity, outcome, adjusted_lm, gro
 # Two possibilities : confidence (x% sure for the mean value) or prediction (x% sure for an observation)
 
 # Function to return groups based on confidence intervals
-get_groups_confidence <- function(actual, pred,is_resilience_positive=FALSE) {
+get_groups_intervals <- function(actual, pred,is_resilience_positive=FALSE) {
   groups <- vector("character", length(actual))
   for (i in 1:length(actual)) {
     # Take car of any NA values
@@ -272,14 +281,16 @@ get_groups_confidence <- function(actual, pred,is_resilience_positive=FALSE) {
 }
 
 # Visualization of the intervals
-visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_lm, preds, labels, main = "Intervals") {
-  # Adjusted linear model coefficients
+vizualisation_intervals <- function(df, adversity, outcome, adjusted_lm, preds, labels, 
+                                               main = "Intervals", 
+                                               colors = c("#deebf7", "#9ecae1","skyblue2", "#6baed6", "#3182bd", "#08519c")) {
+  # Ajuste le modèle linéaire
   intercept <- coef(adjusted_lm)[1]
   slope     <- coef(adjusted_lm)[2]
   
-  # Base graph with points and regression line
+  # Graphique de base avec points et droite de régression
   plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]])) +
-    geom_point(shape=1,size=0.8) +
+    geom_point(shape = 1, size = 0.8) +
     geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "solid") +
     labs(
       x = adversity,
@@ -290,7 +301,7 @@ visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_
     theme_minimal(base_size = 10) +
     theme(plot.title = element_text(size = 10))
   
-  # Combine all intervals in one dataframe
+  # Combine tous les intervalles
   all_preds <- do.call(rbind, lapply(seq_along(preds), function(i) {
     pred <- preds[[i]]
     pred[[outcome]]   <- df[[outcome]]
@@ -300,7 +311,7 @@ visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_
   }))
   all_preds$label <- factor(all_preds$label, levels = labels)
   
-  # Ribbons with legend for each interval
+  # Ajouter les rubans avec fill personnalisé
   plot <- plot +
     geom_ribbon(
       data = all_preds,
@@ -313,13 +324,26 @@ visualisation_confidence_intervals <- function(df, adversity, outcome, adjusted_
       ),
       alpha = 0.4,
       inherit.aes = FALSE
-    )
+    ) +
+    scale_fill_manual(values = colors)
   
-  if(slope < 0){
-    plot <-plot + geom_text(x=max(na.omit(df[[adversity]]))-5,y=max(na.omit(df[[outcome]]))-5,label="Resilient",alpha=0.2,color="grey") + geom_text(x=min(na.omit(df[[adversity]]))+5,y=min(na.omit(df[[outcome]]))+5,label="Vulnerable",alpha=0.2,color="grey")
-  }
-  else{
-    plot <- plot + geom_text(x=min(na.omit(df[[adversity]]))+5,y=max(na.omit(df[[outcome]]))-5,label="Vulnerable",alpha=0.2,color="grey") + geom_text(x=max(na.omit(df[[adversity]]))-5,y=min(na.omit(df[[outcome]]))+5,label="Resilient",alpha=0.2,color="grey")
+  # Ajout des annotations "resilient" / "vulnerable"
+  if (slope < 0) {
+    plot <- plot +
+      geom_text(x = max(na.omit(df[[adversity]])) - 5,
+                y = max(na.omit(df[[outcome]])) - 5,
+                label = "Resilient", alpha = 0.2, color = "grey") +
+      geom_text(x = min(na.omit(df[[adversity]])) + 5,
+                y = min(na.omit(df[[outcome]])) + 5,
+                label = "Vulnerable", alpha = 0.2, color = "grey")
+  } else {
+    plot <- plot +
+      geom_text(x = min(na.omit(df[[adversity]])) + 5,
+                y = max(na.omit(df[[outcome]])) - 5,
+                label = "Vulnerable", alpha = 0.2, color = "grey") +
+      geom_text(x = max(na.omit(df[[adversity]])) - 5,
+                y = min(na.omit(df[[outcome]])) + 5,
+                label = "Resilient", alpha = 0.2, color = "grey")
   }
   
   return(plot)
@@ -518,12 +542,21 @@ visualization_sd_intervals <- function(df,adversity,outcome,adjusted_lm,bins,res
 
 ## Presentation ##########
 
+# Example 3
+df <- df_CA
+adversity_string <- "T1_FAS"
+outcome_string <- "T1_BDI_II"
+outcome <- df_CA$T1_BDI_II
+bins <- bins_FAS
+res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+
+
 # Example 2
 df <- df_CA
 adversity_string <- "T1_CPTS"
 outcome_string <- "T1_WES_total"
 outcome <- df_CA$T1_WES_total
-bins <- c(20, 32, 45, 60, 80)
+bins <- bins_CPTS
 res <- adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
 
 # Example 1
@@ -531,8 +564,9 @@ df <- df_CA
 adversity_string <- "T1_CPTS"
 outcome_string <- "T1_BDI_II"
 outcome <- df_CA$T1_BDI_II
-bins <- c(20, 32, 45, 60, 80,100)
+bins <- bins_CPTS
 res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+
 
 # Get the info
 lm_adjusted <- res$lm_adjusted
@@ -567,7 +601,7 @@ names_conf <- list(
 # Get groups and update df_n_groups
 groups_confidence <- list()
 for(i in 1:length(preds_conf)){
-  groups <- get_groups_confidence(outcome, preds_conf[[i]],is_resilience_positive=resilience_sign)
+  groups <- get_groups_intervals(outcome, preds_conf[[i]],is_resilience_positive=resilience_sign)
   groups_confidence[[ names_conf[[i]] ]] <- groups
   df_n_groups <- rbind(df_n_groups,
                        data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_conf[[i]])))
@@ -622,7 +656,7 @@ names_cred <- list(
 # Get groups and update df_n_groups
 groups_credibility <- list()
 for(i in 1:length(preds_cred)){
-  groups <- get_groups_confidence(outcome, preds_cred[[i]],is_resilience_positive=resilience_sign)
+  groups <- get_groups_intervals(outcome, preds_cred[[i]],is_resilience_positive=resilience_sign)
   groups_credibility[[ names_cred[[i]] ]] <- groups
   df_n_groups <- rbind(df_n_groups,
                        data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_cred[[i]])))
@@ -655,10 +689,10 @@ groups_sd
 
 # Visualizations
 visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,groups_raw)
-visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
+vizualisation_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
+vizualisation_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted_cred,preds_cred,names_cred,main="Credibility intervals")
+visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
 qqnorm(residuals)
 qqline(residuals)
-visualisation_confidence_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_cred,names_cred,main="Credibility intervals")
-visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
 
 
