@@ -1,27 +1,27 @@
 # Cross-sectional data analysis of the data from the RYSE study.
 
-## Packages : ######
-library(car)
-library(dplyr)
-library(ggplot2)
-library(haven)
-library(lmtest)
-library(olsrr)
-library(rstanarm)
-library(sandwich)
+## Packages ######
+library(car) # lm testing
+library(dplyr) 
+library(ggplot2) # ploting
+library(haven) # read sav data
+library(lmtest) # lm testing
+library(olsrr) # influence statistic
+library(rstanarm) # bayesian lm
+library(sandwich) # lm testing
 
-## Import master dataset : #####
+## Import master dataset #####
 setwd("~/Ecole/M1/Stage/Internship_repo/RYSE data")
 RYSE_master_dataset <- read_sav("RYSE_master_dataset_08082022.sav")
 
-## Separation of the dataset : Canada (CA) and South Africa (SA) : ####
+## Separation of the dataset : Canada (CA) and South Africa (SA) ####
 df_CA <- RYSE_master_dataset[RYSE_master_dataset$Country==1,]
 df_SA <- RYSE_master_dataset[RYSE_master_dataset$Country==2 
                              & RYSE_master_dataset$Site != 4,] # we exclude Zamdela
 
 
-## List of interesting variables : #########
-## Outcomes : #####
+## List of interesting variables #########
+## Outcomes  #####
 
 ### SF-15 general health : CA -> T1, T1A, T2 / SA -> T1, T2
 # Values : 0 to 100
@@ -45,7 +45,7 @@ df_SA <- RYSE_master_dataset[RYSE_master_dataset$Country==2
 #T1a_BDI_II
 #T2_BDI_II
 
-## Risks : ##
+## Risks  ##
 
 ### BDI-II Depression : SA and CA -> T1, T1A, T2
 # Values : 0 to 63
@@ -85,8 +85,15 @@ bins_PoNS <- c(8,16,24,32)
 #T2_PoNS
 
 
-## Get influencers and the corres. adjusted linear regression : ########
+## Get influencers and the corres. adjusted linear regression ########
 
+# Function for adjusted linear regression using influencial statistics
+# Return : list containing :
+# plot : plot with data points, standard regression, adjusted regression and bayesian regression
+# influencers_indices : index of points from the original df that are considered influencial and removed to get the adjusted linear regression
+# lm_adjusted : adjusted linear regression
+# lm_ajusted_cred : adjusted linear regression using bayesian regression
+# residuals_adjusted : residuals of the adjusted linear regression
 adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted linear regression",xlab="Adversity",ylab="Outcome"){
   
   # Unadjusted linear model
@@ -159,6 +166,7 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
                        labels = c("Normal", "Influencer"),
                        name = "Point type") +
     
+    # Title, xlab, ylab, theme
     labs(
       x = xlab,
       y = ylab,
@@ -169,6 +177,7 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
       plot.title = element_text(size = 10)
     )
   
+  # Resilient/Vulnerable anotations
   if(lines_df$slope[[1]] < 0){
     plot <-plot + geom_text(x=max(na.omit(df[[adversity]]))-5,y=max(na.omit(df[[outcome]]))-5,label="Resilient",alpha=0.2,color="grey") + geom_text(x=min(na.omit(df[[adversity]]))+5,y=min(na.omit(df[[outcome]]))+5,label="Vulnerable",alpha=0.2,color="grey")
   }
@@ -183,7 +192,8 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
          residuals_adjusted=residuals_all))
 }
 
-## Adjusted fit pres : ###########
+
+## Adjusted fit results ###########
 
 # CPTS explaining WES
 adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
@@ -207,20 +217,31 @@ adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and
 
 ## Groups : Resilient, average, vulnerable ########
 
-## Raw residuals : #######
+## Raw residuals #######
+
+# Functions to get the groups from the raw residuals
 get_groups_raw_residuals <- function(residuals,is_resilience_positive=FALSE){
   res_list <- list()
   for(i in 1:length(residuals)){
+    
+    # Result depends of the slope sign
     if(is_resilience_positive){
-      res_list[i] <- if(is.na(residuals[i])){NA}else{if(residuals[i]>0){"resilient"}else{if(residuals[i]==0){"average"}else{"vulnerable"}}}
+      res_list[i] <- if(is.na(residuals[i])){NA}
+                      else if(residuals[i]>0){"resilient"}
+                      else if(residuals[i]==0){"average"}
+                      else{"vulnerable"}
     }
     else{
-      res_list[i] <- if(is.na(residuals[i])){NA}else{if(residuals[i]<0){"resilient"}else{if(residuals[i]==0){"average"}else{"vulnerable"}}}
+      res_list[i] <- if(is.na(residuals[i])){NA}
+                    else if(residuals[i]<0){"resilient"}
+                    else if(residuals[i]==0){"average"}
+                    else{"vulnerable"}
     }
   }
   return(res_list)
 }
 
+# Visualization function for raw residuals
 visualization_raw_residuals <- function(df, adversity, outcome, adjusted_lm, groups, main = "Groups using raw residuals") {
   
   # Adjusted linear regression coefficient for the plot
@@ -246,19 +267,26 @@ visualization_raw_residuals <- function(df, adversity, outcome, adjusted_lm, gro
   return(plot)
 }
 
-## Confidence residuals : ######
+## Confidence residuals ######
 
 # Predictions to get the lower and upper bounds for confidence intervals
 # Two possibilities : confidence (x% sure for the mean value) or prediction (x% sure for an observation)
 
-# Function to return groups based on confidence intervals
+# Function to return groups based on confidence/credibility intervals
 get_groups_intervals <- function(actual, pred,is_resilience_positive=FALSE) {
+  
+  # Initialization of the result vector
   groups <- vector("character", length(actual))
+  
+  # For each point
   for (i in 1:length(actual)) {
-    # Take car of any NA values
+    # Look if there are NA values
     if (is.na(actual[i]) || is.na(pred$lwr[i]) || is.na(pred$upr[i])) {
       groups[i] <- NA
-    }else if(is_resilience_positive){
+    }
+    # Grouping depending if the value is under / over / within the bounds of the intervals
+    # Condition on the slope sign
+    else if(is_resilience_positive){
       if (actual[i] < pred$lwr[i]) {
         groups[i] <- "vulnerable"
       } else if (actual[i] > pred$upr[i]) {
@@ -280,15 +308,15 @@ get_groups_intervals <- function(actual, pred,is_resilience_positive=FALSE) {
   return(groups)
 }
 
-# Visualization of the intervals
+# Visualization function for intervals
 vizualisation_intervals <- function(df, adversity, outcome, adjusted_lm, preds, labels, 
                                                main = "Intervals", 
                                                colors = c("#deebf7", "#9ecae1","skyblue2", "#6baed6", "#3182bd", "#08519c")) {
-  # Ajuste le modèle linéaire
+  # Coefficients of the linear regression
   intercept <- coef(adjusted_lm)[1]
   slope     <- coef(adjusted_lm)[2]
   
-  # Graphique de base avec points et droite de régression
+  # Base graph with points and linear regression 
   plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]])) +
     geom_point(shape = 1, size = 0.8) +
     geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "solid") +
@@ -301,7 +329,7 @@ vizualisation_intervals <- function(df, adversity, outcome, adjusted_lm, preds, 
     theme_minimal(base_size = 10) +
     theme(plot.title = element_text(size = 10))
   
-  # Combine tous les intervalles
+  # Combine all intervals parsed in the function
   all_preds <- do.call(rbind, lapply(seq_along(preds), function(i) {
     pred <- preds[[i]]
     pred[[outcome]]   <- df[[outcome]]
@@ -311,7 +339,7 @@ vizualisation_intervals <- function(df, adversity, outcome, adjusted_lm, preds, 
   }))
   all_preds$label <- factor(all_preds$label, levels = labels)
   
-  # Ajouter les rubans avec fill personnalisé
+  # Add ribbons for every intervals
   plot <- plot +
     geom_ribbon(
       data = all_preds,
@@ -327,7 +355,7 @@ vizualisation_intervals <- function(df, adversity, outcome, adjusted_lm, preds, 
     ) +
     scale_fill_manual(values = colors)
   
-  # Ajout des annotations "resilient" / "vulnerable"
+  # Resilient / Vulnerable annotations
   if (slope < 0) {
     plot <- plot +
       geom_text(x = max(na.omit(df[[adversity]])) - 5,
@@ -350,7 +378,7 @@ vizualisation_intervals <- function(df, adversity, outcome, adjusted_lm, preds, 
 }
 
 
-## Quantile residuals : ####
+## Quantile residuals ####
 # We want the quantile_sub lowest residuals and quantile_sup biggest residuals
 get_groups_quantile <- function(residuals,quantile_sub,quantile_sup,is_resilience_positive){
   n <- sum(!is.na(residuals))
@@ -388,14 +416,13 @@ get_groups_quantile <- function(residuals,quantile_sub,quantile_sup,is_resilienc
   return(res)
 }
 
-## Credibility residuals : ##########
+## Credibility residuals ##########
 # We can do the same with a bayesian approach with a credibility interval (for the mean and for predicted values)
 
 # Function to build the credibility intervals from the bayesian adjusted lm
 get_credibility_intervals <- function(lm_adjusted_cred,newdata,lwr=0.025,upr=0.975){
-  complete_rows <- complete.cases(newdata)
   
-  # Posterior linear prediction on complete cases
+  # Posterior linear prediction
   preds <- posterior_linpred(lm_adjusted_cred,
                              newdata = newdata[!is.na(newdata[,c(adversity_string)]),],
                              draws = 1000,
@@ -408,10 +435,12 @@ get_credibility_intervals <- function(lm_adjusted_cred,newdata,lwr=0.025,upr=0.9
   
   # Compute credible intervals per observation (apply over columns)
   intervals <- t(apply(preds, 2, quantile, probs = c(lwr, upr)))
+  
   # Formating the result
   res <- data.frame(lwr=c(), upr=c())
   counter <- 1
-  # Adding NA
+  
+  # Adding NA or computed value for every point of the dataset
   for(i in 1:nrow(newdata)){
     if(!is.na(newdata[i,1])){
       res[i,"lwr"] <- intervals[counter,1]
@@ -479,6 +508,7 @@ get_groups_sd <- function(df, residuals, bins, adversity_string, is_resilience_p
   return(list(groups_sd=groups_sd,res_SD=res_SD*sd_multiplicator))
 }
 
+# Visualization function for the SD intervals
 visualization_sd_intervals <- function(df,adversity,outcome,adjusted_lm,bins,res,main="SD Intervals"){
   # Adjusted linear model coefficients
   intercept <- coef(adjusted_lm)[1]
@@ -540,7 +570,7 @@ visualization_sd_intervals <- function(df,adversity,outcome,adjusted_lm,bins,res
 }
 
 
-## Presentation ##########
+## Results presentation commands ##########
 
 # Example 3
 df <- df_CA
@@ -676,7 +706,7 @@ for(i in 1:length(list_sd_multiplicator)){
                        data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_sd[[i]])))
 }
 
-## Presentation results #########
+## Results #########
 # Cardinal of each group
 View(df_n_groups)
 
