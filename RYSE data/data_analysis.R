@@ -262,7 +262,16 @@ visualization_raw_residuals <- function(df, adversity, outcome, adjusted_lm, gro
       color = "Group"
     ) +
     theme_minimal(base_size = 10) +
-    theme(plot.title = element_text(size = 10))
+    theme(plot.title = element_text(size = 10))+
+    scale_color_manual(values=c("resilient"="skyblue","vulnerable"="coral","average"="grey"))
+  
+  # Add resilient and vulnerable text
+  if(slope < 0){
+    plot <-plot + geom_text(x=max(na.omit(df[[adversity]]))-5,y=max(na.omit(df[[outcome]]))-5,label="Resilient",alpha=0.2,color="grey") + geom_text(x=min(na.omit(df[[adversity]]))+5,y=min(na.omit(df[[outcome]]))+5,label="Vulnerable",alpha=0.2,color="grey")
+  }
+  else{
+    plot <- plot + geom_text(x=min(na.omit(df[[adversity]]))+5,y=max(na.omit(df[[outcome]]))-5,label="Vulnerable",alpha=0.2,color="grey") + geom_text(x=max(na.omit(df[[adversity]]))-5,y=min(na.omit(df[[outcome]]))+5,label="Resilient",alpha=0.2,color="grey")
+  }
   
   return(plot)
 }
@@ -309,7 +318,7 @@ get_groups_intervals <- function(actual, pred,is_resilience_positive=FALSE) {
 }
 
 # Visualization function for intervals
-vizualisation_intervals <- function(df, adversity, outcome, adjusted_lm, preds, labels, 
+visualization_intervals <- function(df, adversity, outcome, adjusted_lm, preds, labels, 
                                                main = "Intervals", 
                                                colors = c("#deebf7", "#9ecae1","skyblue2", "#6baed6", "#3182bd", "#08519c")) {
   # Coefficients of the linear regression
@@ -606,7 +615,7 @@ plot <- res$plot
 resilience_sign <- lm_adjusted$coefficients[2]<0
 
 # Raw residuals
-groups_raw <- get_groups_residuals(residuals,is_resilience_positive=resilience_sign)
+groups_raw <- get_groups_raw_residuals(residuals,is_resilience_positive=resilience_sign)
 df_n_groups <- data.frame(resilient = sum(groups_raw=="resilient", na.rm=TRUE), average = sum(groups_raw=="average", na.rm=TRUE), vulnerable = sum(groups_raw=="vulnerable", na.rm=TRUE), row.names=c("raw residuals"))
 
 # Confidence intervals
@@ -719,10 +728,119 @@ groups_sd
 
 # Visualizations
 visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,groups_raw)
-vizualisation_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
-vizualisation_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted_cred,preds_cred,names_cred,main="Credibility intervals")
+visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
+visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted_cred,preds_cred,names_cred,main="Credibility intervals")
 visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
 qqnorm(residuals)
 qqline(residuals)
 
+## How to choose the right clusturing method ... ? ######
+# We will use unsupervised clusturing algorithms such has k-means and hclust to see what are the groups are obtained
+# and are they corresponding to the groups we found with our previous methods.
 
+# Ideas :
+# We want 3 clusters.
+# We will test if only the residuals, the residuals and the adversity and outcome variable and only the adversity and the outcome.
+# For kmeans : nstart + test to give the orignal centers (highest residual, smallest residual and 0) or not for the k-means algorithm.
+# For hierachical clusturing : try different distances and aggregation methods
+
+
+## K-means ######
+get_groups_kmeans <- function(actual, residuals, is_resilience_positive) {
+  # Initialize result vector
+  groups <- rep(NA_character_, length(actual))
+  
+  # Omit NA values from residuals and store corresponding indices
+  non_na_indices <- which(!is.na(residuals))
+  clean_residuals <- residuals[non_na_indices]
+  
+  # Create dataframe for clustering
+  df_residuals <- data.frame(residual = clean_residuals)
+  
+  # Run K-means clustering with 3 centers
+  clust <- kmeans(df_residuals$residual, centers = 3)
+  df_residuals$cluster <- as.factor(clust$cluster)
+  
+  # Calculate mean residual for each cluster
+  cluster_means <- tapply(df_residuals$residual, df_residuals$cluster, mean)
+  
+  # Identify cluster corresponding to min, average, and max
+  ordered_clusters <- names(sort(cluster_means))
+  min_group <- ordered_clusters[1]
+  average_group <- ordered_clusters[2]
+  max_group <- ordered_clusters[3]
+  
+  # Assign labels based on cluster and resilience sign
+  for (i in seq_along(non_na_indices)) {
+    idx <- non_na_indices[i]
+    cluster_label <- as.character(df_residuals$cluster[i])
+    if (is_resilience_positive) {
+      if (cluster_label == max_group) {
+        groups[idx] <- "resilient"
+      } else if (cluster_label == min_group) {
+        groups[idx] <- "vulnerable"
+      } else {
+        groups[idx] <- "average"
+      }
+    } else {
+      if (cluster_label == max_group) {
+        groups[idx] <- "vulnerable"
+      } else if (cluster_label == min_group) {
+        groups[idx] <- "resilient"
+      } else {
+        groups[idx] <- "average"
+      }
+    }
+  }
+  
+  return(groups)
+}
+
+visualization_kmeans <- function(df,adversity,outcome,adjusted_lm,groups,main="Kmeans clusturing"){
+  # Adjusted linear regression coefficient for the plot
+  intercept <- coef(adjusted_lm)[1]
+  slope     <- coef(adjusted_lm)[2]
+  
+  # Add groups to the temporary df to color the points
+  df$group <- factor(groups, levels = c("resilient", "average", "vulnerable",NA))
+  
+  # Viz
+  plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]], color = group)) +
+    geom_point(shape=1,size=0.8) +
+    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "dashed") +
+    labs(
+      x = adversity,
+      y = outcome,
+      title = main,
+      color = "Group"
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(plot.title = element_text(size = 10))+
+    scale_color_manual(values = c("resilient" = "skyblue", "average" = "grey", "vulnerable" = "coral"))
+  
+  # Add resilient and vulnerable text
+  if(slope < 0){
+    plot <-plot + geom_text(x=max(na.omit(df[[adversity]]))-5,y=max(na.omit(df[[outcome]]))-5,label="Resilient",alpha=0.2,color="grey") + geom_text(x=min(na.omit(df[[adversity]]))+5,y=min(na.omit(df[[outcome]]))+5,label="Vulnerable",alpha=0.2,color="grey")
+  }
+  else{
+    plot <- plot + geom_text(x=min(na.omit(df[[adversity]]))+5,y=max(na.omit(df[[outcome]]))-5,label="Vulnerable",alpha=0.2,color="grey") + geom_text(x=max(na.omit(df[[adversity]]))-5,y=min(na.omit(df[[outcome]]))+5,label="Resilient",alpha=0.2,color="grey")
+  }
+  
+  return(plot)
+}
+
+
+groups_kmeans <- get_groups_kmeans(outcome, residuals, resilience_sign)
+df_n_groups <- rbind(df_n_groups,
+                     data.frame(resilient = sum(groups_kmeans=="resilient", na.rm=TRUE), average = sum(groups_kmeans=="average", na.rm=TRUE), vulnerable = sum(groups_kmeans=="vulnerable", na.rm=TRUE), row.names=c("K-means")))
+
+visualization_kmeans(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans)
+
+## Comparison of 2 groups #####
+number_equal_predictions <- function(groups1,groups2){
+  n_total <- sum(!is.na(groups1))
+  n_common <- sum(groups1==groups2,na.rm=TRUE)
+  return(list(n_common=n_common,proportion=n_common/n_total))
+}
+
+number_equal_predictions(groups_kmeans,groups_quantile[[4]])
