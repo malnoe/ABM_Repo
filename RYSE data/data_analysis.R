@@ -254,7 +254,7 @@ visualization_raw_residuals <- function(df, adversity, outcome, adjusted_lm, gro
   # Viz
   plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]], color = group)) +
     geom_point(shape=1,size=0.8) +
-    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "dashed") +
+    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "solid") +
     labs(
       x = adversity,
       y = outcome,
@@ -639,7 +639,7 @@ get_groups_kmeans <- function(df, residuals, is_resilience_positive, data_for_km
   return(groups)
 }
 
-visualization_groups <- function(df,adversity,outcome,adjusted_lm,groups,main="Kmeans clusturing"){
+visualization_groups <- function(df,adversity,outcome,adjusted_lm,groups,main="Clusturing results"){
   # Adjusted linear regression coefficient for the plot
   intercept <- coef(adjusted_lm)[1]
   slope     <- coef(adjusted_lm)[2]
@@ -647,10 +647,24 @@ visualization_groups <- function(df,adversity,outcome,adjusted_lm,groups,main="K
   # Add groups to the temporary df to color the points
   df$group <- factor(groups, levels = c("resilient", "average", "vulnerable",NA))
   
+  
+  # Get the limit values of the residuals to visualize the separation of the groups
+  df$residuals <- df[[outcome]] - (intercept + slope*df[[adversity]])
+  # Resilient = positive residuals, vulnerable = negative residuals
+  if(slope<0){
+    resilient_limit <- min(df[df$group=="resilient",]$residuals, na.rm = TRUE)
+    vulnerable_limit <- max(df[df$group=="vulnerable",]$residuals, na.rm = TRUE)
+  }
+  # Resilient = negative residuals, vulnerable = positive residuals
+  else{
+    resilient_limit <- max(df[df$group=="resilient",]$residuals, na.rm = TRUE)
+    vulnerable_limit <- min(df[df$group=="vulnerable",]$residuals, na.rm = TRUE)
+  }
+  
   # Viz
   plot <- ggplot(df, aes(x = .data[[adversity]], y = .data[[outcome]], color = group)) +
     geom_point(shape=1,size=0.8) +
-    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "dashed") +
+    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "solid") +
     labs(
       x = adversity,
       y = outcome,
@@ -661,13 +675,19 @@ visualization_groups <- function(df,adversity,outcome,adjusted_lm,groups,main="K
     theme(plot.title = element_text(size = 10))+
     scale_color_manual(values = c("resilient" = "skyblue", "average" = "grey", "vulnerable" = "coral"))
   
-  # Add resilient and vulnerable text
+  # Add resilient and vulnerable text + lines for the seperation of the groups
   if(slope < 0){
     plot <-plot + geom_text(x=max(na.omit(df[[adversity]]))-5,y=max(na.omit(df[[outcome]]))-5,label="Resilient",alpha=0.2,color="grey") + geom_text(x=min(na.omit(df[[adversity]]))+5,y=min(na.omit(df[[outcome]]))+5,label="Vulnerable",alpha=0.2,color="grey")
+    plot <- plot + 
+      geom_abline(intercept = intercept+resilient_limit, slope = slope, color = "grey", linetype = "dashed")+
+      geom_abline(intercept = intercept+vulnerable_limit, slope = slope, color = "grey", linetype = "dashed")
   }
   else{
     plot <- plot + geom_text(x=min(na.omit(df[[adversity]]))+5,y=max(na.omit(df[[outcome]]))-5,label="Vulnerable",alpha=0.2,color="grey") + geom_text(x=max(na.omit(df[[adversity]]))-5,y=min(na.omit(df[[outcome]]))+5,label="Resilient",alpha=0.2,color="grey")
-  }
+    plot <- plot + 
+      geom_abline(intercept = intercept+resilient_limit, slope = slope, color = "grey", linetype = "dashed")+
+      geom_abline(intercept = intercept+vulnerable_limit, slope = slope, color = "grey", linetype = "dashed")
+    }
   
   return(plot)
 }
@@ -877,7 +897,7 @@ groups_kmeans_all3 <- get_groups_kmeans(df, residuals,resilience_sign,data_for_k
 groups_kmeans_all4 <- get_groups_kmeans(df, residuals,resilience_sign,data_for_kmeans = "all",outcome_string = outcome_string,adversity_string = adversity_string)
 
 list_results_kmeans <- list(groups_kmeans_residuals_only,groups_kmeans_all1,groups_kmeans_all2,groups_kmeans_all3,groups_kmeans_all4)
-list_names_kmeans <- list("residuals only","all 1","all 2","all 3","all 4")
+list_names_kmeans <- list("kmeans residuals only","kmeans all 1","kmeans all 2","kmeans all 3","kmeans all 4")
 
 for(i in 1:length(list_results_kmeans)){
   df_n_groups <- rbind(df_n_groups,
@@ -909,6 +929,7 @@ groups_quantile
 groups_credibility
 groups_sd
 groups_kmeans_residuals_only
+groups_hclust
 
 # Visualizations
 visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,groups_raw)
@@ -917,10 +938,10 @@ visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,
 visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
 qqnorm(residuals)
 qqline(residuals)
-visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_residuals_only)
-visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_all1)
-visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_all2)
-visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_hclust$`Hclust ward.D2 euclidean`)
+visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_residuals_only,main="Kmeans residuals only")
+visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_all1,main="Kmeans with adversity + outcome + residuals 1")
+visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_all2,main="Kmeans with adversity + outcome + residuals 2")
+visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_hclust$`Hclust ward.D2 euclidean`,main="Hierachical clusturing residuals only")
 
 ## Comparison of 2 clusturings #####
 # Function to get the cross-table, the number of elements in common and the corresponding proportion
