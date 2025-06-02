@@ -836,11 +836,67 @@ df_n_groups <- rbind(df_n_groups,
 
 visualization_kmeans(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans)
 
-## Comparison of 2 groups #####
-number_equal_predictions <- function(groups1,groups2){
+## Comparison of 2 clusturings #####
+# Function to get the cross-table, the number of elements in common and the corresponding proportion
+number_equal_predictions <- function(groups1,groups2,name1="Group1",name2="Group2"){
+  table <- table(groups1,groups2,dnn=list(name1,name2))
   n_total <- sum(!is.na(groups1))
   n_common <- sum(groups1==groups2,na.rm=TRUE)
-  return(list(n_common=n_common,proportion=n_common/n_total))
+  return(list(table=table,n_common=n_common,proportion=n_common/n_total))
 }
 
-number_equal_predictions(groups_kmeans,groups_quantile[[4]])
+# Function to visualize 2 clusturing
+visualization_comparison <- function(df, adversity_string, outcome_string, adjusted_lm, groups1, groups2, name1 = "Groups1", name2 = "Groups2") {
+  # Adjusted linear regression coefficient
+  intercept <- coef(adjusted_lm)[1]
+  slope     <- coef(adjusted_lm)[2]
+  
+  df1 <- df
+  df2 <- df
+  
+  df1$group <- factor(groups1, levels = c("resilient", "average", "vulnerable", NA))
+  df1$method <- factor(rep(name1, nrow(df)), levels = c(name1, name2))
+  df2$group <- factor(groups2, levels = c("resilient", "average", "vulnerable", NA))
+  df2$method <- factor(rep(name2, nrow(df)), levels = c(name1, name2))
+  
+  df <- rbind(df1, df2)
+  df$method <- factor(df$method, levels = c(name1, name2))  # important de le refaire ici
+  df$group <- factor(df$group,levels=c("resilient", "average", "vulnerable", NA))
+  
+  # Combine into a plot
+  plot <- ggplot(df, aes(x = .data[[adversity_string]], y = .data[[outcome_string]])) +
+    # Groups1: hollow circles
+    geom_point(aes(color = group, shape = method), size = 2, alpha = 0.8)+
+    geom_abline(intercept = intercept, slope = slope, color = "grey", linetype = "dashed") +
+    labs(
+      x = adversity_string,
+      y = outcome_string,
+      title = paste(name1, "vs", name2, "clustering"),
+      color = "Group",
+      shape = "Method"
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(plot.title = element_text(size = 10)) +
+    scale_color_manual(values = c("resilient" = "skyblue", "average" = "grey", "vulnerable" = "coral")) +
+    scale_shape_manual(values = setNames(c(1, 3), c(name1, name2)))
+  
+      
+  # Add contextual labels
+  if (slope < 0) {
+    plot <- plot +
+      geom_text(x = max(na.omit(df[[adversity_string]])) - 5, y = max(na.omit(df[[outcome_string]])) - 5, label = "Resilient", alpha = 0.2, color = "grey") +
+      geom_text(x = min(na.omit(df[[adversity_string]])) + 5, y = min(na.omit(df[[outcome_string]])) + 5, label = "Vulnerable", alpha = 0.2, color = "grey")
+  } else {
+    plot <- plot +
+      geom_text(x = min(na.omit(df[[adversity_string]])) + 5, y = max(na.omit(df[[outcome_string]])) - 5, label = "Vulnerable", alpha = 0.2, color = "grey") +
+      geom_text(x = max(na.omit(df[[adversity_string]])) - 5, y = min(na.omit(df[[outcome_string]])) + 5, label = "Resilient", alpha = 0.2, color = "grey")
+  }
+  
+  return(plot)
+}
+
+
+
+number_equal_predictions(groups_kmeans,groups_quantile[[4]],name1="Kmeans",name2="Quantile 25%")
+visualization_comparison(df_CA,adversity_string,outcome_string,lm_adjusted,groups_kmeans,groups_quantile[[4]],name1="Kmeans",name2="Quantile 25%")
+
