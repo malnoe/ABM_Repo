@@ -943,7 +943,7 @@ visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmean
 visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_all2,main="Kmeans with adversity + outcome + residuals 2")
 visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_hclust$`Hclust ward.D2 euclidean`,main="Hierachical clusturing residuals only")
 
-## Comparison of 2 clusturings #####
+## Comparison of 2 clusterings #####
 # Function to get the cross-table, the number of elements in common and the corresponding proportion
 number_equal_predictions <- function(groups1,groups2,name1="Group1",name2="Group2"){
   table <- table(groups1,groups2,dnn=list(name1,name2))
@@ -1003,7 +1003,26 @@ visualization_comparison <- function(df, adversity_string, outcome_string, adjus
 }
 
 
-
 number_equal_predictions(groups_kmeans_residuals_only,groups_quantile[[4]],name1="Kmeans",name2="Quantile 25%")
 visualization_comparison(df_CA,adversity_string,outcome_string,lm_adjusted,groups_kmeans_residuals_only,groups_quantile[[4]],name1="Kmeans",name2="Quantile 25%")
 visualization_comparison(df_CA,adversity_string,outcome_string,lm_adjusted,groups_kmeans_residuals_only,groups_hclust$`Hclust ward.D2 euclidean`,name1="Kmeans",name2="Hclust ward.D2 euclidean")
+
+
+
+## LPA and LCA preparation ####
+# 1 risk -> CPTS
+# 3 outcomes -> depression, SES and SF-15
+
+# Look at the normality of the residuals
+
+# For each combination take 4-5 intervals and compare them : 1SD, 0.5SD, quantile 25%, quantile 10%, conf 95%
+# -> look more at different distributions of groupings than really the method itself but is ok.
+# -> jusitify the utilization of big or small intervals.
+
+
+
+## LPA ####
+# Take the residuals * adversity with residuals =0 if group=average
+
+## LCA ####
+# Take the class and not the residuals.
