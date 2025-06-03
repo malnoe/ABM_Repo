@@ -197,7 +197,7 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
 ## Adjusted fit results ###########
 
 # CPTS explaining WES
-adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
+#adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
 #adjusted_fit(df=df_CA,adversity="T2_CPTS",outcome="T2_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T2",xlab="CPTS",ylab="WES")
 
 # BDI explaining SES
@@ -209,7 +209,7 @@ adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted 
 #adjusted_fit(df=df_CA,adversity="T1_FAS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for FAS and BDI for Canada at T1",xlab="FAS",ylab="BDI-II")
 
 # CPTS explaining BDI
-adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for Canada at T1",xlab="CPTS",ylab="BDI-II")
+#adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for Canada at T1",xlab="CPTS",ylab="BDI-II")
 #adjusted_fit(df=df_SA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for SA at T1",xlab="CPTS",ylab="BDI-II")
 #adjusted_fit(df=df_CA,adversity="T2_CPTS",outcome="T2_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for Canada at T2",xlab="CPTS",ylab="BDI-II")
 #adjusted_fit(df=df_SA,adversity="T2_CPTS",outcome="T2_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for SA at T2",xlab="CPTS",ylab="BDI-II")
@@ -753,7 +753,7 @@ get_groups_hclust <- function(df, residuals, is_resilience_positive, data_for_hc
   
   return(groups)
 }
-## Results presentation commands ######
+## !! Results presentation commands ######
 
 # Example 3
 df <- df_CA
@@ -918,7 +918,7 @@ for(i in 1:length(methodes)){
 }
 
 
-## Results #########
+## !! Results #########
 # Cardinal of each group
 View(df_n_groups)
 
@@ -943,7 +943,7 @@ visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmean
 visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_all2,main="Kmeans with adversity + outcome + residuals 2")
 visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_hclust$`Hclust ward.D2 euclidean`,main="Hierachical clusturing residuals only")
 
-## Comparison of 2 clusterings #####
+## !! Comparison of 2 clusterings #####
 # Function to get the cross-table, the number of elements in common and the corresponding proportion
 number_equal_predictions <- function(groups1,groups2,name1="Group1",name2="Group2"){
   table <- table(groups1,groups2,dnn=list(name1,name2))
@@ -1009,20 +1009,203 @@ visualization_comparison(df_CA,adversity_string,outcome_string,lm_adjusted,group
 
 
 
+
 ## LPA and LCA preparation ####
+
+# Function to get a dataframe with all of the grouping methods result and the dataframe with the sizes of each group for each method
+get_all_groups <- function(df,adversity_string,outcome_string,bins,res){
+  
+  outcome <- df[[outcome_string]]
+  adversity <- df[[adversity_string]]
+  
+  # Initialize the result data_frames : one with the grouping for each person and each method and one with the number of people in each group for each method
+  df_n_groups <- data.frame(resilient=c(),average=c(),vulnerable=c())
+  df_result <- data.frame(residuals=res$residuals_adjusted,adversity=adversity)
+  
+  # Get the info
+  lm_adjusted <- res$lm_adjusted
+  lm_adjusted_cred <- res$lm_adjusted_cred
+  residuals <- res$residuals_adjusted
+  plot <- res$plot
+  resilience_sign <- lm_adjusted$coefficients[2]<0
+  
+  # Raw residuals
+  groups_raw <- get_groups_raw_residuals(residuals,is_resilience_positive=resilience_sign)
+  df_n_groups <- rbind(df_n_groups,data.frame(resilient = sum(groups_raw=="resilient", na.rm=TRUE), average = sum(groups_raw=="average", na.rm=TRUE), vulnerable = sum(groups_raw=="vulnerable", na.rm=TRUE), row.names=c("raw")))
+  df_result[["raw"]] <- groups_raw
+  
+  # Confidence intervals
+  preds_conf <- list(
+    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.75)),
+    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.6)),
+    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.5)),
+    as.data.frame(predict(lm_adjusted, newdata = df, interval = "confidence", level = 0.99)),
+    as.data.frame(predict(lm_adjusted, newdata = df, interval = "confidence", level = 0.95))
+  )
+  names_conf <- list(
+    "pred. residuals (75%)",
+    "pred. residuals (60%)",
+    "pred. residuals (50%)",
+    "conf. residuals (99%)",
+    "conf. residuals (95%)"
+  )
+  for(i in 1:length(preds_conf)){
+    groups <- get_groups_intervals(outcome, preds_conf[[i]],is_resilience_positive=resilience_sign)
+    df_n_groups <- rbind(df_n_groups,
+                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_conf[[i]])))
+    df_result[[names_conf[[i]]]] <- groups
+    }
+  
+  
+  # Quantiles
+  list_quantile_sub <- list(0.05,0.1,0.15,0.25)
+  list_quantile_sup <- list(0.05,0.1,0.15,0.25)
+  names_quant <- list(
+    "quantiles (5%)",
+    "quantiles (10%)",
+    "quantiles (15%)",
+    "quantiles (25%)"
+  )
+  for(i in 1:length(list_quantile_sub)){
+    groups <- get_groups_quantile(residuals,list_quantile_sub[[i]],list_quantile_sup[[i]],is_resilience_positive=resilience_sign)
+    df_n_groups <- rbind(df_n_groups,
+                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_quant[[i]])))
+    df_result[[names_quant[[i]]]] <- groups
+    }
+  
+  
+  # Credibility intervals
+  preds_cred <- list(
+    get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.0005,upr=0.9995),
+    get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.005,upr=0.995),
+    get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.025,upr=0.975),
+    get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.05,upr=0.95),
+    get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.125,upr=0.875),
+    get_credibility_intervals(lm_adjusted_cred,newdata=df[c(adversity_string)],lwr=0.25,upr=0.75)
+  )
+  names_cred <- list(
+    "cred. 99.9%",
+    "cred. 99%",
+    "cred. 95%",
+    "cred. 90%",
+    "cred. 75%",
+    "cred. 50%"
+  )
+  for(i in 1:length(preds_cred)){
+    groups <- get_groups_intervals(outcome, preds_cred[[i]],is_resilience_positive=resilience_sign)
+    df_n_groups <- rbind(df_n_groups,
+                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_cred[[i]])))
+    df_result[[names_cred[[i]]]] <- groups
+        }
+  
+  # Standard deviation
+  list_sd_multiplicator <- list(2,1,0.5)
+  names_sd <- list("2SD","1SD","0.5SD")
+  for(i in 1:length(list_sd_multiplicator)){
+    groups <- get_groups_sd(df, residuals, bins, adversity_string, resilience_sign, sd_multiplicator=list_sd_multiplicator[[i]])$groups_sd
+    df_n_groups <- rbind(df_n_groups,
+                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_sd[[i]])))
+    df_result[[names_sd[[i]]]] <- groups
+    }
+  
+  # Kmeans (only residuals)
+  groups_kmeans <- get_groups_kmeans(df, residuals,resilience_sign,outcome_string = outcome_string,adversity_string = adversity_string)
+  df_n_groups <- rbind(df_n_groups,
+                         data.frame(resilient = sum(groups_kmeans=="resilient", na.rm=TRUE), average = sum(groups_kmeans=="average", na.rm=TRUE), vulnerable = sum(groups_kmeans=="vulnerable", na.rm=TRUE), row.names=c("Kmeans")))
+  df_result[["Kmeans"]] <- groups_kmeans
+  
+  return(list(df_result=df_result,df_n_groups=df_n_groups))
+}
+
 # 1 risk -> CPTS
 # 3 outcomes -> depression, SES and SF-15
+#T1_SF_14_PHC
+#T1_SES_total
+#T1_BDI_II
+#T1_CPTS
 
-# Look at the normality of the residuals
+df_CA_LPA <- df_CA[!is.na(df_CA$T1_SF_14_PHC) & !is.na(df_CA$T1_SES_total) & !is.na(df_CA$T1_BDI_II) & !is.na(df_CA$T1_CPTS),]
+df_SA_LPA <- df_SA[!is.na(df_SA$T1_SF_14_PHC) & !is.na(df_SA$T1_SES_total_SA) & !is.na(df_SA$T1_BDI_II) & !is.na(df_SA$T1_CPTS),]
 
-# For each combination take 4-5 intervals and compare them : 1SD, 0.5SD, quantile 25%, quantile 10%, conf 95%
-# -> look more at different distributions of groupings than really the method itself but is ok.
-# -> jusitify the utilization of big or small intervals.
+# We choose the SA dataset because it's larger 383 > 243.
 
+# Depression
+df <- df_SA_LPA
+adversity_string <- "T1_CPTS"
+outcome_string <- "T1_BDI_II"
+bins <- bins_CPTS
+res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+shapiro.test(res$residuals_adjusted)
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res)
+depression_df_result <- result_all_groups$df_result
+depression_df_n_groups <- result_all_groups$df_n_groups
+
+# Health
+df <- df_SA_LPA
+adversity_string <- "T1_CPTS"
+outcome_string <- "T1_SF_14_PHC"
+bins <- bins_CPTS
+res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+shapiro.test(res$residuals_adjusted)
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res)
+health_df_result <- result_all_groups$df_result
+health_df_n_groups <- result_all_groups$df_n_groups
+
+# School Engagement
+df <- df_SA_LPA
+adversity_string <- "T1_CPTS"
+outcome_string <- "T1_SES_total_SA"
+bins <- bins_CPTS
+res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+shapiro.test(res$residuals_adjusted)
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res)
+school_df_result <- result_all_groups$df_result
+school_df_n_groups <- result_all_groups$df_n_groups
+
+
+transformed_residuals <- function(df_result,group_name,method="log"){
+  res <- c()
+  for(i in 1:nrow(df_result)){
+    group <- df_result[i,group_name]
+    if(group=='average'){
+      res <- c(res,0)
+    }
+    else{
+      if(method=="nothing"){
+        res <- c(res,df_result[i,"residuals"])
+      }
+      else if(method=="log"){
+        res <- c(res,df_result[i,"residuals"]*log1p(df_result[i,"adversity"]))
+      }
+      res <- c(res,df_result[i,"residuals"]*df_result[i,"adversity"])
+    }
+  }
+  return(res)
+}
+
+depression_transformed_residuals <- transformed_residuals(depression_df_result,"quantiles (25%)",method="nothing")
+health_transformed_residuals <- transformed_residuals(health_df_result,"quantiles (25%)",method="nothing")
+school_transformed_residuals <- transformed_residuals(school_df_result,"quantiles (25%)",method="nothing")
+a <- data.frame(depression=depression_transformed_residuals,health=health_transformed_residuals,school=school_transformed_residuals)
 
 
 ## LPA ####
 # Take the residuals * adversity with residuals =0 if group=average
+a %>%
+  select(depression, health, school) %>%
+  single_imputation() %>%
+  estimate_profiles(2:5, 
+                    variances = c("equal", "varying"),
+                    covariances = c("zero", "varying"))  %>%
+  compare_solutions(statistics = c("AIC", "BIC"))
+
+a %>%
+  select(depression, health, school) %>%
+  single_imputation() %>%
+  estimate_profiles(2:5, 
+                    variances = c("equal", "varying"),
+                    covariances = c("zero", "varying")) %>%
+  plot_profiles()
 
 ## LCA ####
 # Take the class and not the residuals.
