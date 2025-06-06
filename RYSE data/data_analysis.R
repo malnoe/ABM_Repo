@@ -2,13 +2,22 @@
 
 ## Packages ######
 library(car) # lm testing
+library(caret) # confusion matrix
 library(dplyr) 
+library(e1071) #NB
 library(ggplot2) # ploting
+library(generics)
 library(haven) # read sav data
 library(lmtest) # lm testing
+library(MASS) # for stepAIC + lda + qda
 library(olsrr) # influence statistic
+library(poLCA) # Latent Class Analysis
+library(rpart) # Classification trees
 library(rstanarm) # bayesian lm
 library(sandwich) # lm testing
+library(tidyLPA) # LPA
+library(tidymodels) # multiclass classification regression
+
 
 ## Import master dataset #####
 setwd("~/Ecole/M1/Stage/Internship_repo/RYSE data")
@@ -1010,10 +1019,64 @@ visualization_comparison(df_CA,adversity_string,outcome_string,lm_adjusted,group
 
 
 
-## LPA and LCA preparation ####
+## Is there an intervals that does the grouping better ? ####
+
+transform_residuals<-function(residuals,adversity,is_resilience_positive,method){
+  res <- c()
+  for(i in 1:length(residuals)){
+    if(method=="multiply"){
+      res[i] <- residuals[i]*adversity[i]
+    }
+    else if(method=="log_multiply"){
+      res[i] <- residuals[i]*log(1+adversity[i])
+    }
+    else if(method=="multiply_divide"){
+      if(is_resilience_positive){
+        res_i <- residuals[i]
+        if(res_i>=0){
+          res[i] <- res_i*adversity[i]
+        }
+        else{
+          res[i] <- res_i/adversity[i]
+        }
+      }
+      else{
+        res_i <- residuals[i]
+        if(res_i>=0){
+          res[i] <- res_i/adversity[i]
+        }
+        else{
+          res[i] <- res_i*adversity[i]
+        }
+      }
+    }
+    else if(method=="log_multiply_divide"){
+      if(is_resilience_positive){
+        res_i <- residuals[i]
+        if(res_i>=0){
+          res[i] <- res_i*log(1+adversity[i])
+        }
+        else{
+          res[i] <- res_i/log(1+adversity[i])
+        }
+      }
+      else{
+        res_i <- residuals[i]
+        if(res_i>=0){
+          res[i] <- res_i/log(1+adversity[i])
+        }
+        else{
+          res[i] <- res_i*log(1+adversity[i])
+        }
+      }
+    }
+  }
+  print(head(res,10))
+  return(res)
+}
 
 # Function to get a dataframe with all of the grouping methods result and the dataframe with the sizes of each group for each method
-get_all_groups <- function(df,adversity_string,outcome_string,bins,res){
+get_all_groups <- function(df,adversity_string,outcome_string,bins,res,modification="nothing"){
   
   outcome <- df[[outcome_string]]
   adversity <- df[[adversity_string]]
@@ -1025,9 +1088,15 @@ get_all_groups <- function(df,adversity_string,outcome_string,bins,res){
   # Get the info
   lm_adjusted <- res$lm_adjusted
   lm_adjusted_cred <- res$lm_adjusted_cred
-  residuals <- res$residuals_adjusted
   plot <- res$plot
   resilience_sign <- lm_adjusted$coefficients[2]<0
+  if(modification!="nothing"){
+    residuals <- transform_residuals(res$residuals_adjusted,adversity,resilience_sign,method=modification)
+  }
+  else{
+    residuals <- res$residuals_adjusted
+  }
+  
   
   # Raw residuals
   groups_raw <- get_groups_raw_residuals(residuals,is_resilience_positive=resilience_sign)
@@ -1116,96 +1185,470 @@ get_all_groups <- function(df,adversity_string,outcome_string,bins,res){
   
   return(list(df_result=df_result,df_n_groups=df_n_groups))
 }
+# Same function with less grouping methods to be faster.
+get_all_groups_small <- function(df,adversity_string,outcome_string,bins,res,modification="nothing"){
+  
+  outcome <- df[[outcome_string]]
+  adversity <- df[[adversity_string]]
+  
+  # Initialize the result data_frames : one with the grouping for each person and each method and one with the number of people in each group for each method
+  df_n_groups <- data.frame(resilient=c(),average=c(),vulnerable=c())
+  df_result <- data.frame(residuals=res$residuals_adjusted,adversity=adversity)
+  
+  # Get the info
+  lm_adjusted <- res$lm_adjusted
+  lm_adjusted_cred <- res$lm_adjusted_cred
+  plot <- res$plot
+  resilience_sign <- lm_adjusted$coefficients[2]<0
+  if(modification!="nothing"){
+    residuals <- transform_residuals(res$residuals_adjusted,adversity,resilience_sign,method=modification)
+  }
+  else{
+    residuals <- res$residuals_adjusted
+  }
+  
+  # Confidence intervals
+  preds_conf <- list(
+    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.75)),
+    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.6)),
+    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.5))
+  )
+  names_conf <- list(
+    "pred. residuals (75%)",
+    "pred. residuals (60%)",
+    "pred. residuals (50%)"
+  )
+  for(i in 1:length(preds_conf)){
+    groups <- get_groups_intervals(outcome, preds_conf[[i]],is_resilience_positive=resilience_sign)
+    df_n_groups <- rbind(df_n_groups,
+                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_conf[[i]])))
+    df_result[[names_conf[[i]]]] <- groups
+  }
+  
+  
+  # Quantiles
+  list_quantile_sub <- list(0.05,0.1,0.15,0.2,0.25)
+  list_quantile_sup <- list(0.05,0.1,0.15,0.2,0.25)
+  names_quant <- list(
+    "quantiles (5%)",
+    "quantiles (10%)",
+    "quantiles (15%)",
+    "quantiles (20%)",
+    "quantiles (25%)"
+  )
+  for(i in 1:length(list_quantile_sub)){
+    groups <- get_groups_quantile(residuals,list_quantile_sub[[i]],list_quantile_sup[[i]],is_resilience_positive=resilience_sign)
+    df_n_groups <- rbind(df_n_groups,
+                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_quant[[i]])))
+    df_result[[names_quant[[i]]]] <- groups
+  }
+  
+  # Standard deviation
+  list_sd_multiplicator <- list(2,1,0.5)
+  names_sd <- list("2SD","1SD","0.5SD")
+  for(i in 1:length(list_sd_multiplicator)){
+    groups <- get_groups_sd(df, residuals, bins, adversity_string, resilience_sign, sd_multiplicator=list_sd_multiplicator[[i]])$groups_sd
+    df_n_groups <- rbind(df_n_groups,
+                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_sd[[i]])))
+    df_result[[names_sd[[i]]]] <- groups
+  }
+  
+  return(list(df_result=df_result,df_n_groups=df_n_groups))
+}
 
-# 1 risk -> CPTS
-# 3 outcomes -> depression, SES and SF-15
-#T1_SF_14_PHC
-#T1_SES_total
-#T1_BDI_II
-#T1_CPTS
+groups_to_test <- list("quantiles (5%)",
+                       "quantiles (10%)",
+                       "quantiles (15%)",
+                       "quantiles (25%)",
+                       "pred. residuals (75%)",
+                       "pred. residuals (60%)",
+                       "pred. residuals (50%)")
 
-df_CA_LPA <- df_CA[!is.na(df_CA$T1_SF_14_PHC) & !is.na(df_CA$T1_SES_total) & !is.na(df_CA$T1_BDI_II) & !is.na(df_CA$T1_CPTS),]
-df_SA_LPA <- df_SA[!is.na(df_SA$T1_SF_14_PHC) & !is.na(df_SA$T1_SES_total_SA) & !is.na(df_SA$T1_BDI_II) & !is.na(df_SA$T1_CPTS),]
+# Dataframes with all the values
+vars <- c("T1_SF_14_PHC", "T1_SES_total", "T1_BDI_II", "T1_CPTS")
 
-# We choose the SA dataset because it's larger 383 > 243.
+df_SA_LPA <- df_SA[complete.cases(df_SA[, vars]), ]
+df_CA_LPA <- df_CA[complete.cases(df_CA[, vars]), ]
 
-# Depression
+# We choose the SA dataset because it's larger 366 > 236.
 df <- df_SA_LPA
+
 adversity_string <- "T1_CPTS"
+
+# Depression 
 outcome_string <- "T1_BDI_II"
 bins <- bins_CPTS
-res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
-shapiro.test(res$residuals_adjusted)
-result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res)
+res_depression <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_depression <- res_depression$residuals_adjusted
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression)
 depression_df_result <- result_all_groups$df_result
-depression_df_n_groups <- result_all_groups$df_n_groups
 
 # Health
-df <- df_SA_LPA
-adversity_string <- "T1_CPTS"
 outcome_string <- "T1_SF_14_PHC"
 bins <- bins_CPTS
-res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
-shapiro.test(res$residuals_adjusted)
-result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res)
+res_health <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_health <- res_health$residuals_adjusted
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_health)
 health_df_result <- result_all_groups$df_result
-health_df_n_groups <- result_all_groups$df_n_groups
 
 # School Engagement
-df <- df_SA_LPA
-adversity_string <- "T1_CPTS"
 outcome_string <- "T1_SES_total_SA"
 bins <- bins_CPTS
-res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
-shapiro.test(res$residuals_adjusted)
-result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res)
+res_school <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_school <- res_school$residuals_adjusted
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_school)
 school_df_result <- result_all_groups$df_result
-school_df_n_groups <- result_all_groups$df_n_groups
 
+## Impact of multiplying / dividing ####
+outcome_string <- "T1_BDI_II"
+bins <- bins_CPTS
+res_depression <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_depression <- res_depression$residuals_adjusted
+# Nothing
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification="nothing")
+grouping_nothing <- result_all_groups$df_n_groups
+# Multiply
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification="multiply")
+grouping_multiply <- result_all_groups$df_n_groups
+#Multiply and divide
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification="multiply_divide")
+grouping_multiply_divide <- result_all_groups$df_n_groups
+# log multiply and divide
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification="log_multiply_divide")
+grouping_log_multiply_divide <- result_all_groups$df_n_groups
 
-transformed_residuals <- function(df_result,group_name,method="log"){
+## LPA ####
+# Function to transform the residuals methods -> "log_multiply", "multiply_divide","log_multiply" or whathever to just multiply.
+transformed_residuals <- function(df_result,group_name,method="log_multiply_divide"){
   res <- c()
   for(i in 1:nrow(df_result)){
     group <- df_result[i,group_name]
+    
+    # If the person is in the average group then the residual is set to 0.
     if(group=='average'){
       res <- c(res,0)
     }
+    # Else we do a transformation
     else{
       if(method=="nothing"){
         res <- c(res,df_result[i,"residuals"])
       }
-      else if(method=="log"){
+      else if(method=="log_multiply_divide"){
+        # Multiply/Divide (depending on the group) the residuals by log(1+adversity)
+        if(group=="resilient"){
+          res <- c(res,df_result[i,"residuals"]*log1p(df_result[i,"adversity"]))
+        }
+        else{
+          res <- c(res,df_result[i,"residuals"]/log1p(df_result[i,"adversity"]))
+        }
+      }
+      else if(method=="multiply_divide"){
+        # Multiply/Divide (depending on the group) the residual by the adversity
+        if(group=="resilient"){
+          res <- c(res,df_result[i,"residuals"]*df_result[i,"adversity"])
+        }
+        else{
+          res <- c(res,df_result[i,"residuals"]/df_result[i,"adversity"])
+        }
+      }
+      else if(method=="log_multiply"){
+        # Multiply the residual by log(1+adversity)
         res <- c(res,df_result[i,"residuals"]*log1p(df_result[i,"adversity"]))
       }
-      res <- c(res,df_result[i,"residuals"]*df_result[i,"adversity"])
+      else{
+        # Multiply the residual by the adversity
+        res <- c(res,df_result[i,"residuals"]*df_result[i,"adversity"])
+      }
     }
   }
   return(res)
 }
 
-depression_transformed_residuals <- transformed_residuals(depression_df_result,"quantiles (25%)",method="nothing")
-health_transformed_residuals <- transformed_residuals(health_df_result,"quantiles (25%)",method="nothing")
-school_transformed_residuals <- transformed_residuals(school_df_result,"quantiles (25%)",method="nothing")
-a <- data.frame(depression=depression_transformed_residuals,health=health_transformed_residuals,school=school_transformed_residuals)
+profile_estimation_LPA <- function(depression_df_result,health_df_result,school_df_result,list_group_names,method="nothing",list_classes){
+  
+  # Initialize the result dataframe
+  res <- data.frame(group_name=c(),AIC=c(),BIC=c(),Entropy=c())
+  
+  for(j in list_classes){
+    # For each grouping method
+    for(i in 1:length(list_group_names)){
+      group_name <- list_group_names[[i]]
+      print(group_name)
+      
+      # We get the transformed residuals for each of the 3 outcomes
+      depression_residuals <- transformed_residuals(depression_df_result,group_name,method=method)
+      health_residuals <- transformed_residuals(health_df_result,group_name,method=method)
+      school_residuals <- transformed_residuals(school_df_result,group_name,method=method)
+      
+      
+      # Concat everything in onde dataframe
+      df_concat <- data.frame(depression=depression_residuals,health=health_residuals,school=school_residuals)
+      
+      # Profile estimation with LPA
+      profile_estimated <- df_concat %>%
+        dplyr::select(depression, health, school) %>%
+        single_imputation() %>%
+        estimate_profiles(j, 
+                          variances = c("equal"),
+                          covariances = c("equal"),nrep = 5)
+      # Get the AIC, BIC and entropy and add it to the df
+      res <- rbind(res, data.frame(
+        n_classes = j,
+        group_name = group_name,
+        AIC = profile_estimated[[paste0("model_3_class_",toString(j))]]$fit[['AIC']],
+        BIC = profile_estimated[[paste0("model_3_class_",toString(j))]]$fit[['BIC']],
+        Entropy = profile_estimated[[paste0("model_3_class_",toString(j))]]$fit[["Entropy"]]
+      ))
+  }
+ }
+  return(res)
+}
 
-
-## LPA ####
-# Take the residuals * adversity with residuals =0 if group=average
-a %>%
-  select(depression, health, school) %>%
-  single_imputation() %>%
-  estimate_profiles(2:5, 
-                    variances = c("equal", "varying"),
-                    covariances = c("zero", "varying"))  %>%
-  compare_solutions(statistics = c("AIC", "BIC"))
-
-a %>%
-  select(depression, health, school) %>%
-  single_imputation() %>%
-  estimate_profiles(2:5, 
-                    variances = c("equal", "varying"),
-                    covariances = c("zero", "varying")) %>%
-  plot_profiles()
+LPA_result<-profile_estimation_LPA(depression_df_result,health_df_result,school_df_result,groups_to_test,
+                  method="nothing",list(3,4,5,6,7))
 
 ## LCA ####
-# Take the class and not the residuals.
+profile_estimation_LCA <- function(depression_df_result,health_df_result,school_df_result,list_group_names,list_classes){
+  
+  # Initialize the result dataframe
+  res <- data.frame(n_classes=c(),group_name=c(),AIC=c(),BIC=c(),G2=c(),X2=c(),Rep=c())
+  
+  #For each number of classes
+  for(j in list_classes){
+    
+    # For each grouping method
+    for(i in 1:length(list_group_names)){
+      # Get the grouping
+      group_name <- list_group_names[[i]]
+      print(group_name)
+      
+      # We get the groups for the chosen grouping
+      depression_groups <- depression_df_result[[group_name]]
+      health_groups <- health_df_result[[group_name]]
+      school_groups <- school_df_result[[group_name]]
+      
+      
+      # Concat everything in onde dataframe
+      df_concat <- data.frame(depression=depression_groups,health=health_groups,school=school_groups)
+      # Recode to factors with numeric levels
+      df_lca <- df_concat %>%
+        mutate(across(everything(), ~ factor(.x, levels = c("vulnerable", "average", "resilient")))) %>%
+        mutate(across(everything(), ~ as.numeric(.x)))
+      
+      # Profile estimation with LCA
+      f <- cbind(depression,health,school)~1
+      lca_model <- poLCA(f, df_lca, nclass = j,nrep = 5)
+      
+      # Get the AIC, BIC and entropy and add it to the df
+      res <- rbind(res, data.frame(
+        n_classes = j,
+        group_name = group_name,
+        AIC = lca_model$aic,
+        BIC = lca_model$bic,
+        G2 = lca_model$Gsq,
+        X2 = lca_model$Chisq,
+        max_post_prob = max(lca_model$P)
+      ))
+      
+      }
+    
+  }
+  return(res)
+}
+
+LCA_result<-profile_estimation_LCA(depression_df_result,health_df_result,school_df_result,groups_to_test,list(2,3))
+View(LCA_result)
+
+## Classification ####
+vars <- c("T1_SF_14_PHC", "T1_SES_total", "T1_BDI_II", "T1_CPTS","T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))
+
+df_SA_LPA <- df_SA[complete.cases(df_SA[, vars]), ]
+df_CA_LPA <- df_CA[complete.cases(df_CA[, vars]), ]
+
+# We choose the SA dataset because it's larger 366 > 236.
+df <- df_SA_LPA
+
+adversity_string <- "T1_CPTS"
+
+# Depression 
+outcome_string <- "T1_BDI_II"
+bins <- bins_CPTS
+res_depression <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_depression <- res_depression$residuals_adjusted
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression)
+depression_df_result <- result_all_groups$df_result
+
+# Health
+outcome_string <- "T1_SF_14_PHC"
+bins <- bins_CPTS
+res_health <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_health <- res_health$residuals_adjusted
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_health)
+health_df_result <- result_all_groups$df_result
+
+# School Engagement
+outcome_string <- "T1_SES_total_SA"
+bins <- bins_CPTS
+res_school <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_school <- res_school$residuals_adjusted
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_school)
+school_df_result <- result_all_groups$df_result
+
+classification_metrics <- function(true_labels, predicted_labels) {
+  # Convert to factors with same levels
+  levels <- c("resilient", "average", "vulnerable")
+  true_labels <- factor(true_labels, levels = levels)
+  predicted_labels <- factor(predicted_labels, levels = levels)
+  
+  # Confusion Matrix
+  cm <- caret::confusionMatrix(predicted_labels, true_labels)
+  
+  # Extract raw table
+  cm_table <- cm$table
+  n_classes <- length(levels)
+  
+  # Print
+  print(cm_table)
+  
+  # Initialize results list
+  results <- list()
+  
+  # Overall accuracy
+  results$accuracy <- cm$overall["Accuracy"]
+  
+  # Balanced accuracy = mean(recall per class)
+  recalls <- numeric(n_classes)
+  precisions <- numeric(n_classes)
+  f1s <- numeric(n_classes)
+  fns <- numeric(n_classes)
+  fps <- numeric(n_classes)
+  supports <- numeric(n_classes)
+  
+  for (i in 1:n_classes) {
+    class <- levels[i]
+    
+    TP <- cm_table[i, i]
+    FN <- sum(cm_table[, i]) - TP
+    FP <- sum(cm_table[i, ]) - TP
+    TN <- sum(cm_table) - TP - FP - FN
+    
+    recall <- if ((TP + FN) == 0) NA else TP / (TP + FN)
+    precision <- if ((TP + FP) == 0) NA else TP / (TP + FP)
+    f1 <- if (is.na(precision) || is.na(recall) || (precision + recall) == 0) NA else 2 * (precision * recall) / (precision + recall)
+    
+    recalls[i] <- recall
+    precisions[i] <- precision
+    f1s[i] <- f1
+    fns[i] <- FN
+    fps[i] <- FP
+    supports[i] <- sum(cm_table[, i])
+  }
+  
+  names(recalls) <- levels
+  names(precisions) <- levels
+  names(f1s) <- levels
+  names(fns) <- paste0("FN_", levels)
+  names(fps) <- paste0("FP_", levels)
+  names(supports) <- levels
+  
+  results$macro_recall <- mean(recalls, na.rm = TRUE)
+  results$macro_precision <- mean(precisions,na.rm=TRUE)
+  results$f1_per_class <- f1s
+  results$precision_per_class <- precisions
+  results$recall_per_class <- recalls
+  results$macro_f1 <- mean(f1s, na.rm = TRUE)
+  results$false_negatives <- fns
+  results$false_positives <- fps
+  results$support <- supports
+  
+  return(results)
+}
+
+estimation_classification <- function(df,df_result,item_name,list_group_names,method="Naive_Bayes"){
+  set.seed(1) # For reproductibility
+  predictors <- c("T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))
+  res <- data.frame()
+  
+  for(i in 1:length(list_group_names)){
+    # Get the grouping
+    group_name <- list_group_names[[i]]
+    print(group_name)
+    
+    # We get the groups for the chosen grouping for all 3 items
+    df[["groups"]] <- df_result[[group_name]]
+    y <- df[["groups"]]
+    X <- df[, predictors]
+    
+    # We choose the classification method and look at the results
+    if(method=="classification_tree"){
+      formula <- as.formula(paste("groups ~", paste(predictors, collapse = " + ")))
+      arbre <- rpart(formula, data = df, method = "class")
+      predictions <- predict(arbre, type = "class")
+    }
+    else if(method=="LDA"){
+      model_lda <- lda(X,y)
+      predictions <- predict(model_lda, X)$class
+    }
+    else if(method=="Naive_Bayes"){
+      formula <- as.formula(paste("groups ~", paste(predictors, collapse = " + ")))
+      model_nb <- naiveBayes(formula, data = df)
+      predictions <- predict(model_nb,newdata=df,type="class")
+    }
+    else if(method=="Logistic_Regression"){
+      df[["groups"]] <- factor(df[["groups"]], levels = c("resilient", "average", "vulnerable"))
+      formula <- as.formula(paste("groups ~", paste(predictors, collapse = " + ")))
+      model_fit <- multinom_reg() |> fit(formula, data = df)
+      preds <- model_fit |> augment(new_data = df)
+      predictions <- preds$.pred_class
+    }
+    
+    # Metrics
+    metrics <- classification_metrics(df[["groups"]],predictions)
+    
+    res <- rbind(res, data.frame(
+      group_name = group_name,
+      accuracy = metrics$accuracy[[1]],
+      null_model = metrics$support[["average"]] / (metrics$support[["resilient"]]+metrics$support[["average"]]+metrics$support[["vulnerable"]]),
+      macro_precision = metrics$macro_precision[[1]],
+      macro_recall = metrics$macro_recall[[1]],
+      macro_f1 = metrics$macro_f1[[1]],
+      precision_resilient = metrics$precision_per_class[["resilient"]],
+      recall_resilient = metrics$recall_per_class[["resilient"]],
+      f1score_resilient = metrics$f1_per_class[["resilient"]],
+      precision_average = metrics$precision_per_class[["average"]],
+      recall_average = metrics$recall_per_class[["average"]],
+      f1score_average = metrics$f1_per_class[["average"]],
+      precision_vulnerable = metrics$precision_per_class[["vulnerable"]],
+      recall_vulnerable = metrics$recall_per_class[["vulnerable"]],
+      f1score_vulnerable = metrics$f1_per_class[["vulnerable"]],
+      support_resilient = metrics$support[["resilient"]],
+      support_average = metrics$support[["average"]],
+      support_vulnerable = metrics$support[["vulnerable"]]
+    ))
+  }
+  return(res)
+}
+
+# Depression results
+depression_classification_result_tree <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="classification_tree")
+depression_classification_result_LDA <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="LDA")
+depression_classification_result_NB <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="Naive_Bayes")
+depression_classification_result_Logistic <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="Logistic_Regression")
+
+# Health results
+health_classification_result_tree <- estimation_classification(df,health_df_result,"health", groups_to_test,method="classification_tree")
+health_classification_result_LDA <- estimation_classification(df,health_df_result,"health", groups_to_test,method="LDA")
+health_classification_result_NB <- estimation_classification(df,health_df_result,"health", groups_to_test,method="Naive_Bayes")
+health_classification_result_Logistic <- estimation_classification(df,health_df_result,"health", groups_to_test,method="Logistic_Regression")
+
+# School results
+school_classification_result_tree <- estimation_classification(df,school_df_result,"school", groups_to_test,method="classification_tree")
+school_classification_result_LDA <- estimation_classification(df,school_df_result,"school", groups_to_test,method="LDA")
+school_classification_result_NB <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Naive_Bayes")
+school_classification_result_Logistic <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Logistic_Regression")
+
+
+# See if using the log_multiply_divide transformation helps
+result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification ="log_multiply_divide")
+depression_df_result_log_multiply_divide <- result_all_groups$df_result
+depression_classification_result_tree_log_multiply_divide <- estimation_classification(df,depression_df_result_log_multiply_divide,"depression", groups_to_test,method="classification_tree")
