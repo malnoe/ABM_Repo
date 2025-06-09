@@ -10,6 +10,7 @@ library(generics)
 library(haven) # read sav data
 library(lmtest) # lm testing
 library(MASS) # for stepAIC + lda + qda
+library(missForest) # to impute data
 library(olsrr) # influence statistic
 library(poLCA) # Latent Class Analysis
 library(rpart) # Classification trees
@@ -21,7 +22,9 @@ library(tidymodels) # multiclass classification regression
 
 ## Import master dataset #####
 setwd("~/Ecole/M1/Stage/Internship_repo/RYSE data")
+load("~/Ecole/M1/Stage/Internship_repo/RYSE data/.RData")
 RYSE_master_dataset <- read_sav("RYSE_master_dataset_08082022.sav")
+
 
 ## Separation of the dataset : Canada (CA) and South Africa (SA) ####
 df_CA <- RYSE_master_dataset[RYSE_master_dataset$Country==1,]
@@ -1238,6 +1241,11 @@ get_all_groups_small <- function(df,adversity_string,outcome_string,bins,res,mod
     df_result[[names_sd[[i]]]] <- groups
   }
   
+  # Kmeans
+  groups <- get_groups_kmeans(df, residuals,resilience_sign,outcome_string = outcome_string,adversity_string = adversity_string)
+  df_n_groups <- rbind(df_n_groups,
+                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c("kmeans residuals only")))
+  df_result[["kmeans residuals only"]] <- groups
   return(list(df_result=df_result,df_n_groups=df_n_groups))
 }
 
@@ -1247,7 +1255,9 @@ groups_to_test <- list("quantiles (5%)",
                        "quantiles (25%)",
                        "pred. residuals (75%)",
                        "pred. residuals (60%)",
-                       "pred. residuals (50%)")
+                       "pred. residuals (50%)",
+                       "kmeans residuals only")
+
 
 # Dataframes with all the values
 vars <- c("T1_SF_14_PHC", "T1_SES_total", "T1_BDI_II", "T1_CPTS")
@@ -1615,6 +1625,7 @@ estimation_classification <- function(df,df_result,item_name,list_group_names,me
   return(res)
 }
 
+
 # Depression results
 depression_classification_result_tree <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="classification_tree")
 depression_classification_result_LDA <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="LDA")
@@ -1634,9 +1645,174 @@ school_classification_result_NB <- estimation_classification(df,school_df_result
 school_classification_result_Logistic <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Logistic_Regression")
 
 
-
-
 # See if using the log_multiply_divide transformation helps
 result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification ="log_multiply_divide")
 depression_df_result_log_multiply_divide <- result_all_groups$df_result
 depression_classification_result_tree_log_multiply_divide <- estimation_classification(df,depression_df_result_log_multiply_divide,"depression", groups_to_test,method="classification_tree")
+
+
+
+
+library(rpart)
+
+estimation_classification_tree_with_test <- function(df, df_result, item_name, list_group_names, n_perm = 100) {
+  set.seed(1) # For reproducibility
+  predictors <- c("T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))
+  res <- data.frame()
+  
+  for (i in seq_along(list_group_names)) {
+    group_name <- list_group_names[[i]]
+    cat("Processing:", group_name, "\n")
+    
+    df[["groups"]] <- df_result[[group_name]]
+    y <- df[["groups"]]
+    X <- df[, predictors]
+    
+    # Build and evaluate model on real data
+    formula <- as.formula(paste("groups ~", paste(predictors, collapse = " + ")))
+    arbre <- rpart(formula, data = df, method = "class")
+    predictions <- predict(arbre, type = "class")
+    
+    metrics <- classification_metrics(df[["groups"]], predictions)
+    acc_obs <- metrics$accuracy[[1]]
+    
+    # Permutation test
+    perm_accuracies <- numeric(n_perm)
+    for (j in 1:n_perm) {
+      df$groups_perm <- sample(df[["groups"]])  # shuffle labels
+      arbre_perm <- rpart(groups_perm ~ ., data = cbind(df[predictors], groups_perm = df$groups_perm), method = "class")
+      preds_perm <- predict(arbre_perm, type = "class")
+      perm_accuracies[j] <- mean(preds_perm == df$groups_perm)
+    }
+    p_value <- mean(perm_accuracies >= acc_obs)
+    
+    # Add the result to the global dataframe
+    res <- rbind(res, data.frame(
+      group_name = group_name,
+      accuracy = acc_obs,
+      null_model = metrics$support[["average"]] / sum(unlist(metrics$support)),
+      p_value_permutation = p_value,
+      macro_precision = metrics$macro_precision[[1]],
+      macro_recall = metrics$macro_recall[[1]],
+      macro_f1 = metrics$macro_f1[[1]],
+      precision_resilient = metrics$precision_per_class[["resilient"]],
+      recall_resilient = metrics$recall_per_class[["resilient"]],
+      f1score_resilient = metrics$f1_per_class[["resilient"]],
+      precision_average = metrics$precision_per_class[["average"]],
+      recall_average = metrics$recall_per_class[["average"]],
+      f1score_average = metrics$f1_per_class[["average"]],
+      precision_vulnerable = metrics$precision_per_class[["vulnerable"]],
+      recall_vulnerable = metrics$recall_per_class[["vulnerable"]],
+      f1score_vulnerable = metrics$f1_per_class[["vulnerable"]],
+      support_resilient = metrics$support[["resilient"]],
+      support_average = metrics$support[["average"]],
+      support_vulnerable = metrics$support[["vulnerable"]]
+    ))
+  }
+  return(res)
+}
+
+
+depression_classification_result_tree_with_test <- estimation_classification_tree_with_test(df,depression_df_result,"depression", groups_to_test, n_perm = 500)
+school_classification_result_tree_with_test <- estimation_classification_tree_with_test(df,school_df_result,"school", groups_to_test, n_perm = 500)
+health_classification_result_tree_with_test <- estimation_classification_tree_with_test(df,health_df_result,"health", groups_to_test, n_perm = 500)
+View(depression_classification_result_tree_with_test)
+View(school_classification_result_tree_with_test)
+View(health_classification_result_tree_with_test)
+
+## PART II : Engagement depending on BDI-II
+dim(df_SA)
+
+# Variables used
+residuals_vars <- c("T1_SES_total_SA","T1_WES_total", "T1_BDI_II","T1_edu_1a")
+explication_vars <- c("T1_Sex","T1_Age",paste0("T1_CYRM_", 1:28),paste0("T1_PoNS_",1:8),paste0("T1_SF15_",1:15),paste0("T1_CPTS_",1:20),paste0("T1_FAS_",1:9),paste0("T1_BCE_",1:10))
+
+# Dataframe with SES or WES + pertinent variables
+df_SAr <- df_SA[(!is.na(df_SA$T1_SES_total_SA)|!is.na(df_SA$T1_WES_total)) & !is.na(df_SA$T1_BDI_II)&!is.na(df_SA$T1_CYRM_10),c(residuals_vars,explication_vars)]
+dim(df_SAr) # 423 individuals
+
+# Impute data 
+df_SAr_wtWESSES <- df_SAr[explication_vars]
+df_SAr_wtWESSES <- as.data.frame(lapply(df_SAr_wtWESSES, function(x) as.numeric(as.character(x))))
+df_SAr_wtWESSES.mf <- missForest::missForest(xmis = df_SAr_wtWESSES)
+df_SAr[,explication_vars] <- df_SAr_wtWESSES.mf$ximp
+#visdat::vis_miss(df_SAr)
+
+# Engagement variable
+  # Put SES and WES on a 0 to 100 scale
+  n <- nrow(df_SAr)
+  for(i in 1:n){
+    if(is.na(df_SAr[i,"T1_WES_total"])){
+      df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_SES_total_SA"]-33)/(165-33)*100
+    }
+    else if(is.na(df_SAr[i,"T1_SES_total_SA"])){
+      df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_WES_total"]-9)/(63-9)*100
+    }
+    else{# If both are not NA
+      if(df_SAr[i,"T1_edu_1a"] %in% 9:12){
+        df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_SES_total_SA"]-33)/(165-33)*100
+      }
+      else{
+        df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_SES_total_SA"]-33)/(165-33)*100
+      }
+    }
+  }
+
+View(df_SAr)
+
+# PCA/EFA on Perception of Neighborhood
+library(FactoMineR)
+library(factoextra)
+library(Factoshiny)
+library(corrr)
+library(corrplot)
+
+res.PCA<-PCA(df_SAr[, c(paste0("T1_PoNS_", 1:8))],graph=FALSE)
+res.PCA$eig
+fviz_screeplot(X=res.PCA, addlabels = TRUE, ylim = c(0, 50))
+fviz_pca_var(res.PCA, axes = 1 :2,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+fviz_pca_var(res.PCA, axes = 3:4,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+corrplot(cor(df_SAr[, c(paste0("T1_PoNS_", 1:8))]))
+
+#Comments : We can see two groups emerge for the variable : 
+# 1,2,4,5,7 which are positively correlated together and are characterized by relatively big value on dim1 and small positive value on dim2. We don't see the group again on dim 3 and 4. 
+# 3, 6 and 8 which are positively correlated together and are characterized by a small negative value on dim1 and a relatively big value on dim2. Again we don't see this grouping again.
+# Good to note that questions 3,6 and 8 are the questions that need to be "reversed".
+# The two groups are at a 90° angle which would mean a small correlation between them.
+
+# Groupings for each method
+df <- df_SAr
+adversity_string <- "T1_BDI_II"
+outcome_string <- "T1_Engagement"
+outcome <- df$T1_Engagement
+bins <- bins_BDI_II
+res <- adjusted_fit(df_SAr,adversity="T1_BDI_II",outcome="T1_Engagement",main="Adjusted and unadjusted linear regression of Engagement (work/school) with BDI-II score",xlab="BDI-II score",ylab="Engagement")
+lm_adjusted <- res$lm_adjusted
+lm_adjusted_cred <- res$lm_adjusted_cred
+residuals <- res$residuals_adjusted
+
+all_groups_BDI_Engagement <- get_all_groups(df,adversity_string,outcome_string,bins,res,modification="nothing")
+df_result_BDI_Engagement <- all_groups_BDI_Engagement$df_result
+df_n_groups_BDI_Engagement <- all_groups_BDI_Engagement$df_n_groups
+
+# Visualization
+visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,df_result_BDI_Engagement$raw)
+visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence and prediction intervals")
+visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted_cred,preds_cred,names_cred,main="Credibility intervals")
+visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
+qqnorm(residuals)
+qqline(residuals)
+visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_residuals_only,main="Kmeans residuals only")
+
+# Classification
+# Need to change the predictors included inside of the classification
+estimation_classification_tree_with_test(df,df_result_BDI_Engagement,"Engagement",groups_to_test,n_perm=500)
+
+# LPA for engagement and BDI
+profile_estimated <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(2:6, 
+                    variances = c("equal","varying","equal"),
+                    covariances = c("zero","zero","equal"),nrep = 5)
+
