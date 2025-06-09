@@ -146,12 +146,11 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
   # Lines
   lines_df <- data.frame(
     intercept = c(coef(lm_unadjusted)[1],
-                  coef(lm_adjusted)[1],
-                  coef(lm_adjusted_cred)[1]),
+                  coef(lm_adjusted)[1]),
     slope = c(coef(lm_unadjusted)[2],
-              coef(lm_adjusted)[2],
-              coef(lm_adjusted_cred)[2]),
-    model = c("Unadjusted", "Adjusted","Adjusted Bayes")
+              coef(lm_adjusted)[2]),
+    model = c("Unadjusted", 
+              "Adjusted")
   )
   
   
@@ -168,8 +167,7 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
     
     # Legend
     scale_color_manual(values = c("Unadjusted" = "deepskyblue3",
-                                  "Adjusted" = "aquamarine3",
-                                  "Adjusted Bayes" = "slateblue2"),
+                                  "Adjusted" = "aquamarine3"),
                        name="Model") +
     
     scale_shape_manual(values = c(`FALSE` = 1, `TRUE` = 16),
@@ -205,26 +203,14 @@ adjusted_fit <- function(df,adversity,outcome,main="Adjusted and unadjusted line
 
 ## Adjusted fit results ###########
 
-# CPTS explaining WES
-#adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
-#adjusted_fit(df=df_CA,adversity="T2_CPTS",outcome="T2_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T2",xlab="CPTS",ylab="WES")
+# CPTS explaining SF-14
+adjusted_fit(df=df_SA,adversity="T1_CPTS",outcome="T1_SF_14_PHC",main="Adjusted and unadjusted linear regression for CPTS and SF-14 for SA at T1",xlab="CPTS",ylab="SF-14")
 
-# BDI explaining SES
-#adjusted_fit(df=df_SA,adversity="T1_BDI_II",outcome="T1_SES_total_T2",main="Adjusted and unadjusted linear regression for BDI and SES for SA at T1",xlab="BDI-II",ylab="SES")
-#adjusted_fit(df=df_CA,adversity="T1_BDI_II",outcome="T1_SES_total_T2",main="Adjusted and unadjusted linear regression for BDI and SES for Canada at T1",xlab="BDI-II",ylab="SES")
-#adjusted_fit(df=df_SA,adversity="T2_BDI_II",outcome="T2_SES_total",main="Adjusted and unadjusted linear regression for BDI and SES for SA at T2",xlab="BDI-II",ylab="SES")
-#adjusted_fit(df=df_CA,adversity="T2_BDI_II",outcome="T2_SES_total",main="Adjusted and unadjusted linear regression for BDI and SES for Canada at T2",xlab="BDI-II",ylab="SES")
-
-#adjusted_fit(df=df_CA,adversity="T1_FAS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for FAS and BDI for Canada at T1",xlab="FAS",ylab="BDI-II")
+# CPTS explaining SES
+adjusted_fit(df=df_SA,adversity="T1_CPTS",outcome="T1_SES_total",main="Adjusted and unadjusted linear regression for CPTS and SES for SA at T1",xlab="CPTS",ylab="SES")
 
 # CPTS explaining BDI
-#adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for Canada at T1",xlab="CPTS",ylab="BDI-II")
-#adjusted_fit(df=df_SA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for SA at T1",xlab="CPTS",ylab="BDI-II")
-#adjusted_fit(df=df_CA,adversity="T2_CPTS",outcome="T2_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for Canada at T2",xlab="CPTS",ylab="BDI-II")
-#adjusted_fit(df=df_SA,adversity="T2_CPTS",outcome="T2_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for SA at T2",xlab="CPTS",ylab="BDI-II")
-
-# Many more possibilities of crossing...
-
+adjusted_fit(df=df_SA,adversity="T1_CPTS",outcome="T1_BDI_II",main="Adjusted and unadjusted linear regression for CPTS and BDI for SA at T1",xlab="CPTS",ylab="BDI-II")
 
 ## Raw residuals functions #######
 
@@ -764,28 +750,27 @@ get_groups_hclust <- function(df, residuals, is_resilience_positive, data_for_hc
 }
 ## !! Results presentation commands ######
 
-# Example 3
-df <- df_CA
-adversity_string <- "T1_FAS"
+# Example Depression
+df <- df_SA
+adversity_string <- "T1_CPTS"
 outcome_string <- "T1_BDI_II"
-outcome <- df_CA$T1_BDI_II
-bins <- bins_FAS
+outcome <- df_SA$T1_BDI_II
+bins <- bins_CPTS
 res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 
-
-# Example 2
-df <- df_CA
+# Example School engagement
+df <- df_SA
 adversity_string <- "T1_CPTS"
-outcome_string <- "T1_WES_total"
-outcome <- df_CA$T1_WES_total
+outcome_string <- "T1_SES_total"
+outcome <- df_SA$T1_SES_total
 bins <- bins_CPTS
-res <- adjusted_fit(df=df_CA,adversity="T1_CPTS",outcome="T1_WES_total",main="Adjusted and unadjusted linear regression for CPTS and WES for Canada at T1",xlab="CPTS",ylab="WES")
+res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 
-# Example 1
-df <- df_CA
+# Example Health
+df <- df_SA
 adversity_string <- "T1_CPTS"
-outcome_string <- "T1_BDI_II"
-outcome <- df_CA$T1_BDI_II
+outcome_string <- "T1_SF_14_PHC"
+outcome <- df_SA$T1_SF_14_PHC
 bins <- bins_CPTS
 res <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 
@@ -942,7 +927,7 @@ groups_hclust
 
 # Visualizations
 visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,groups_raw)
-visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence intervals")
+visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence and prediction intervals")
 visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted_cred,preds_cred,names_cred,main="Credibility intervals")
 visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
 qqnorm(residuals)
@@ -1405,7 +1390,8 @@ profile_estimation_LPA <- function(depression_df_result,health_df_result,school_
 }
 
 LPA_result<-profile_estimation_LPA(depression_df_result,health_df_result,school_df_result,groups_to_test,
-                  method="nothing",list(3,4,5,6,7))
+                  method="nothing",list(3,4,5,6,7,8,9,10))
+View(LPA_result)
 
 ## LCA ####
 profile_estimation_LCA <- function(depression_df_result,health_df_result,school_df_result,list_group_names,list_classes){
@@ -1646,6 +1632,8 @@ school_classification_result_tree <- estimation_classification(df,school_df_resu
 school_classification_result_LDA <- estimation_classification(df,school_df_result,"school", groups_to_test,method="LDA")
 school_classification_result_NB <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Naive_Bayes")
 school_classification_result_Logistic <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Logistic_Regression")
+
+
 
 
 # See if using the log_multiply_divide transformation helps
