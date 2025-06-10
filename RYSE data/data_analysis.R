@@ -3,15 +3,16 @@
 ## Packages ######
 library(car) # lm testing
 library(caret) # confusion matrix
-library(corrr)
-library(corrplot)
-library(dplyr) 
-library(e1071) #NB
+library(corrr) # correlation
+library(corrplot) # plot
+library(dplyr) # dataframe managment
+library(e1071) #NaiveBayes
 library(factoextra) # PCA
 library(FactoMineR) # PCA
 library(Factoshiny) # PCA
 library(ggplot2) # ploting
 library(generics)
+library(gridExtra) # plotinh
 library(haven) # read sav data
 library(lmtest) # lm testing
 library(MASS) # for stepAIC + lda + qda
@@ -1129,14 +1130,16 @@ get_all_groups <- function(df,adversity_string,outcome_string,bins,res,modificat
   
   
   # Quantiles
-  list_quantile_sub <- list(0.05,0.1,0.15,0.2,0.25)
-  list_quantile_sup <- list(0.05,0.1,0.15,0.2,0.25)
+  list_quantile_sub <- list(0.05,0.1,0.15,0.2,0.25,0.3,0.35)
+  list_quantile_sup <- list(0.05,0.1,0.15,0.2,0.25,0.3,0.35)
   names_quant <- list(
     "quantiles (5%)",
     "quantiles (10%)",
     "quantiles (15%)",
     "quantiles (20%)",
-    "quantiles (25%)"
+    "quantiles (25%)",
+    "quantiles (30%)",
+    "quantiles (35%)"
   )
   for(i in 1:length(list_quantile_sub)){
     groups <- get_groups_quantile(residuals,list_quantile_sub[[i]],list_quantile_sup[[i]],is_resilience_positive=resilience_sign)
@@ -1754,6 +1757,8 @@ groups_to_test <- list("quantiles (5%)",
                        "quantiles (15%)",
                        "quantiles (20%)",
                        "quantiles (25%)",
+                       "quantiles (30%)",
+                       "quantiles (35%)",
                        "pred. residuals (75%)",
                        "pred. residuals (60%)",
                        "pred. residuals (50%)",
@@ -1783,7 +1788,6 @@ groups_to_test_small <- list("quantiles (5%)",
                              "Kmeans")
 df_perf_classification_tree <- estimation_classification_tree_with_test(df,df_result_BDI_Engagement,"Engagement",groups_to_test,n_perm=100,predictors = explication_vars)
 
-
 # PCA/EFA on Perception of Neighborhood
 res.PCA<-PCA(df_SAr[, c(paste0("T1_PoNS_", 1:8))],graph=FALSE)
 res.PCA$eig
@@ -1806,24 +1810,146 @@ df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
                     covariances = c("zero","zero","equal"),nrep = 5) %>%
   compare_solutions(statistics = c("AIC", "BIC"))
 # Best model according to AIC is Model 3 with 5 classes.
-df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+plot_3_5 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
   dplyr::select(T1_BDI_II, T1_Engagement) %>%
   single_imputation() %>%
   estimate_profiles(5,variances=c("equal"),covariances=c("equal")) %>% 
   plot_profiles()
 # Best model according to BIC is Model 1 with 3 classes.
-df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+plot_1_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
   dplyr::select(T1_BDI_II, T1_Engagement) %>%
   single_imputation() %>%
   estimate_profiles(3,variances=c("equal"),covariances=c("zero")) %>% 
   plot_profiles()
 # Best model according to analytic hierarchy process is Model 2 with 3 classes.
-df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+plot_2_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
   dplyr::select(T1_BDI_II, T1_Engagement) %>%
   single_imputation() %>%
   estimate_profiles(3,variances=c("varying"),covariances=c("zero")) %>% 
   plot_profiles()
 
+grid.arrange(plot_3_5,plot_1_3,plot_2_3, ncol = 3)
 
+# Function to modify the residuals depending on the group
+transformed_residuals <- function(df_result,group_name,method="nothing"){
+  res <- c()
+  for(i in 1:nrow(df_result)){
+    group <- df_result[i,group_name,drop=TRUE]
+    
+    # If the person is in the average group then the residual is set to 0.
+    if(group=='average'){
+      res <- c(res,0)
+    }
+    # Else we do a transformation
+    else{
+      if(method=="nothing"){
+        res <- c(res,df_result[i,"residuals"])
+      }
+      else if(method=="log_multiply_divide"){
+        # Multiply/Divide (depending on the group) the residuals by log(1+adversity)
+        if(group=="resilient"){
+          res <- c(res,df_result[i,"residuals"]*log1p(1+df_result[i,"adversity"]))
+        }
+        else{
+          res <- c(res,df_result[i,"residuals"]/log1p(1+df_result[i,"adversity"]))
+        }
+      }
+      else if(method=="multiply_divide"){
+        # Multiply/Divide (depending on the group) the residual by the adversity
+        if(group=="resilient"){
+          res <- c(res,df_result[i,"residuals"]*(1+df_result[i,"adversity"]))
+        }
+        else{
+          res <- c(res,df_result[i,"residuals"]/(1+df_result[i,"adversity"]))
+        }
+      }
+      else if(method=="log_multiply"){
+        # Multiply the residual by log(1+adversity)
+        res <- c(res,df_result[i,"residuals"]*log1p(1+df_result[i,"adversity"]))
+      }
+      else{
+        # Multiply the residual by the adversity
+        res <- c(res,df_result[i,"residuals"]*df_result[i,"adversity"])
+      }
+    }
+  }
+  return(res)
+}
+
+# Function for regression trees
+regression_tree <- function(df,df_result,list_group_names,predictors=explication_vars,method="nothing"){
+  set.seed(1) # For reproductibility
+  res <- data.frame()
+  residuals <- df_result[["residuals"]]
+  
+  for(i in 1:length(list_group_names)){
+    # Get the grouping
+    group_name <- list_group_names[[i]]
+    print(group_name)
+    
+    # We transform the residuals according to the groups
+    df[[paste0("residuals",group_name)]] <- transformed_residuals(df_result,group_name,method=method)
+    
+    # We choose the classification method and look at the results
+    response_var <- paste0("residuals", group_name)
+    response_var <- paste0("`", response_var, "`")
+    f <- paste0(response_var, " ~ ", paste(predictors, collapse = " + "))
+    formula <- as.formula(f)
+    tree <- rpart(formula, data = df)
+    prediction <- predict(tree)
+    
+    # We calculate metrics
+    true <- df[[paste0("residuals",group_name)]]
+    n <- nrow(df_result)
+    MSE <- mean((true-prediction)^2)
+    RMSE <- sqrt(MSE)
+    MAE <- mean(abs(true-prediction))
+    R.squared <- 1 - sum((true-prediction)^2)/sum((true-mean(true))^2)
+    R.squared.adjusted <- 1 - (1-R.squared)*(n-1)/(n-length(predictors)-1)
+    
+    
+    res <- rbind(res, data.frame(
+      group_name = group_name,
+      average_group_size=sum(df_result[[group_name]]=="average")/nrow(df_result),
+      MSE =MSE,
+      RMSE = RMSE,
+      MAE=MAE,
+      R.squared=R.squared,
+      R.squared.adjusted=R.squared.adjusted))
+  }
+  return(res)
+}
 # Regression tree to predict transformed residuals
-# Regression tree to predict residuals
+df_perf_regression_tree <- regression_tree(df,df_result_BDI_Engagement,groups_to_test,predictors = explication_vars,method = "nothing")
+
+# Visualization of the result
+df_long <- df_perf_regression_tree %>%
+  pivot_longer(cols = c(R.squared, R.squared.adjusted),
+               names_to = "metric",
+               values_to = "value")
+plot_performance <- ggplot(df_long, aes(x = average_group_size, y = value, color = metric)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Performance Metrics vs. Group Size",
+       x = "Average Group Size",
+       y = "Performance",
+       color = "Metric") +
+  theme_minimal()
+
+df_long <- df_perf_regression_tree %>%
+  pivot_longer(cols = c(MAE,RMSE),
+               names_to = "metric",
+               values_to = "value")
+plot_error <- ggplot(df_long, aes(x = average_group_size, y = value, color = metric)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Performance Metrics vs. Group Size",
+       x = "Average Group Size",
+       y = "Error",
+       color = "Metric") +
+  theme_minimal()
+
+
+grid.arrange(plot_performance, plot_error, ncol = 2)
+
+
