@@ -3,6 +3,8 @@
 ## Packages ######
 library(car) # lm testing
 library(caret) # confusion matrix
+library(corrr)
+library(corrplot)
 library(dplyr) 
 library(e1071) #NB
 library(factoextra) # PCA
@@ -22,13 +24,13 @@ library(sandwich) # lm testing
 library(tidyLPA) # LPA
 library(tidymodels) # multiclass classification regression
 
-library(corrr)
-library(corrplot)
 
 
-## Import master dataset #####
+## Import work ####
 setwd("~/Ecole/M1/Stage/Internship_repo/RYSE data")
 load("~/Ecole/M1/Stage/Internship_repo/RYSE data/.RData")
+
+## Import master dataset #####
 RYSE_master_dataset <- read_sav("RYSE_master_dataset_08082022.sav")
 
 
@@ -67,7 +69,7 @@ df_SA <- RYSE_master_dataset[RYSE_master_dataset$Country==2
 
 ### BDI-II Depression : SA and CA -> T1, T1A, T2
 # Values : 0 to 63
-bins_BDI_II <- c(0,14,20,26,63)
+bins_BDI_II <- c(0,14,20,26,64)
 #T1_BDI_II
 #T1a_BDI_II
 #T2_BDI_II
@@ -475,7 +477,7 @@ get_groups_sd <- function(df, residuals, bins, adversity_string, is_resilience_p
   
   # Calculate the SD for each bin
   for (i in 1:(length(bins) - 1)) {
-    in_bin <- df[[adversity_string]] > bins[i] & df[[adversity_string]] < bins[i + 1]
+    in_bin <- df[[adversity_string]] >= bins[i] & df[[adversity_string]] < bins[i + 1]
     
     bin_labels[in_bin] <- i #We save the i indice of the bin for each line that's in the bin
     
@@ -522,7 +524,7 @@ get_groups_sd <- function(df, residuals, bins, adversity_string, is_resilience_p
 }
 
 # Visualization function for the SD intervals
-visualization_sd_intervals <- function(df,adversity,outcome,adjusted_lm,bins,res,main="SD Intervals"){
+visualization_sd_intervals <- function(df,adversity,outcome,adjusted_lm,bins,res,names_sd,main="SD Intervals"){
   # Adjusted linear model coefficients
   intercept <- coef(adjusted_lm)[1]
   slope     <- coef(adjusted_lm)[2]
@@ -938,13 +940,10 @@ groups_hclust
 visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,groups_raw)
 visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence and prediction intervals")
 visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted_cred,preds_cred,names_cred,main="Credibility intervals")
-visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
+visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,names_sd=names_sd,main="SD Intervals")
 qqnorm(residuals)
 qqline(residuals)
 visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_residuals_only,main="Kmeans residuals only")
-visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_all1,main="Kmeans with adversity + outcome + residuals 1")
-visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_all2,main="Kmeans with adversity + outcome + residuals 2")
-visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_hclust$`Hclust ward.D2 euclidean`,main="Hierachical clusturing residuals only")
 
 ## !! Comparison of 2 clusterings #####
 # Function to get the cross-table, the number of elements in common and the corresponding proportion
@@ -1013,7 +1012,7 @@ visualization_comparison(df_CA,adversity_string,outcome_string,lm_adjusted,group
 
 
 
-## Is there an intervals that does the grouping better ? ####
+## Functions : Get all groups + transformation of residuals ####
 
 transform_residuals<-function(residuals,adversity,is_resilience_positive,method){
   res <- c()
@@ -1070,7 +1069,7 @@ transform_residuals<-function(residuals,adversity,is_resilience_positive,method)
 }
 
 # Function to get a dataframe with all of the grouping methods result and the dataframe with the sizes of each group for each method
-get_all_groups <- function(df,adversity_string,outcome_string,bins,res,modification="nothing"){
+get_all_groups <- function(df,adversity_string,outcome_string,bins,res,modification="nothing",visualization=TRUE){
   
   outcome <- df[[outcome_string]]
   adversity <- df[[adversity_string]]
@@ -1097,7 +1096,11 @@ get_all_groups <- function(df,adversity_string,outcome_string,bins,res,modificat
   df_n_groups <- rbind(df_n_groups,data.frame(resilient = sum(groups_raw=="resilient", na.rm=TRUE), average = sum(groups_raw=="average", na.rm=TRUE), vulnerable = sum(groups_raw=="vulnerable", na.rm=TRUE), row.names=c("raw")))
   df_result[["raw"]] <- groups_raw
   
-  # Confidence intervals
+  if(visualization){
+    print(visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,groups_raw))
+  }
+  
+  # Prediction and confidence intervals
   preds_conf <- list(
     as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.75)),
     as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.6)),
@@ -1117,16 +1120,22 @@ get_all_groups <- function(df,adversity_string,outcome_string,bins,res,modificat
     df_n_groups <- rbind(df_n_groups,
                          data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_conf[[i]])))
     df_result[[names_conf[[i]]]] <- groups
-    }
+  }
+  
+  if(visualization){
+    print(visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence and prediction intervals"))
+  }
+  
   
   
   # Quantiles
-  list_quantile_sub <- list(0.05,0.1,0.15,0.25)
-  list_quantile_sup <- list(0.05,0.1,0.15,0.25)
+  list_quantile_sub <- list(0.05,0.1,0.15,0.2,0.25)
+  list_quantile_sup <- list(0.05,0.1,0.15,0.2,0.25)
   names_quant <- list(
     "quantiles (5%)",
     "quantiles (10%)",
     "quantiles (15%)",
+    "quantiles (20%)",
     "quantiles (25%)"
   )
   for(i in 1:length(list_quantile_sub)){
@@ -1134,8 +1143,7 @@ get_all_groups <- function(df,adversity_string,outcome_string,bins,res,modificat
     df_n_groups <- rbind(df_n_groups,
                          data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_quant[[i]])))
     df_result[[names_quant[[i]]]] <- groups
-    }
-  
+  }
   
   # Credibility intervals
   preds_cred <- list(
@@ -1159,112 +1167,73 @@ get_all_groups <- function(df,adversity_string,outcome_string,bins,res,modificat
     df_n_groups <- rbind(df_n_groups,
                          data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_cred[[i]])))
     df_result[[names_cred[[i]]]] <- groups
-        }
+  }
+  
+  if(visualization){
+    print(visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted_cred,preds_cred,names_cred,main="Credibility intervals"))
+  }
   
   # Standard deviation
   list_sd_multiplicator <- list(2,1,0.5)
   names_sd <- list("2SD","1SD","0.5SD")
+  res_sd <- list()
   for(i in 1:length(list_sd_multiplicator)){
-    groups <- get_groups_sd(df, residuals, bins, adversity_string, resilience_sign, sd_multiplicator=list_sd_multiplicator[[i]])$groups_sd
+    res_sd[[i]] <- get_groups_sd(df, residuals, bins, adversity_string, resilience_sign, sd_multiplicator=list_sd_multiplicator[[i]])
+    groups <- res_sd[[i]]$groups_sd
     df_n_groups <- rbind(df_n_groups,
                          data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_sd[[i]])))
     df_result[[names_sd[[i]]]] <- groups
-    }
+  }
+  if(visualization){
+    print(visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res_sd,names_sd=names_sd,main="SD Intervals"))
+  }
   
   # Kmeans (only residuals)
   groups_kmeans <- get_groups_kmeans(df, residuals,resilience_sign,outcome_string = outcome_string,adversity_string = adversity_string)
   df_n_groups <- rbind(df_n_groups,
                          data.frame(resilient = sum(groups_kmeans=="resilient", na.rm=TRUE), average = sum(groups_kmeans=="average", na.rm=TRUE), vulnerable = sum(groups_kmeans=="vulnerable", na.rm=TRUE), row.names=c("Kmeans")))
   df_result[["Kmeans"]] <- groups_kmeans
-  
-  return(list(df_result=df_result,df_n_groups=df_n_groups))
-}
-# Same function with less grouping methods to be faster.
-get_all_groups_small <- function(df,adversity_string,outcome_string,bins,res,modification="nothing"){
-  
-  outcome <- df[[outcome_string]]
-  adversity <- df[[adversity_string]]
-  
-  # Initialize the result data_frames : one with the grouping for each person and each method and one with the number of people in each group for each method
-  df_n_groups <- data.frame(resilient=c(),average=c(),vulnerable=c())
-  df_result <- data.frame(residuals=res$residuals_adjusted,adversity=adversity)
-  
-  # Get the info
-  lm_adjusted <- res$lm_adjusted
-  lm_adjusted_cred <- res$lm_adjusted_cred
-  plot <- res$plot
-  resilience_sign <- lm_adjusted$coefficients[2]<0
-  if(modification!="nothing"){
-    residuals <- transform_residuals(res$residuals_adjusted,adversity,resilience_sign,method=modification)
-  }
-  else{
-    residuals <- res$residuals_adjusted
+  if(visualization){
+    print(visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans,main="Groups using k-means algorithm"))
   }
   
-  # Confidence intervals
-  preds_conf <- list(
-    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.75)),
-    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.6)),
-    as.data.frame(predict(lm_adjusted, newdata = df, interval = "prediction", level = 0.5))
-  )
-  names_conf <- list(
-    "pred. residuals (75%)",
-    "pred. residuals (60%)",
-    "pred. residuals (50%)"
-  )
-  for(i in 1:length(preds_conf)){
-    groups <- get_groups_intervals(outcome, preds_conf[[i]],is_resilience_positive=resilience_sign)
-    df_n_groups <- rbind(df_n_groups,
-                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_conf[[i]])))
-    df_result[[names_conf[[i]]]] <- groups
-  }
-  
-  
-  # Quantiles
-  list_quantile_sub <- list(0.05,0.1,0.15,0.2,0.25)
-  list_quantile_sup <- list(0.05,0.1,0.15,0.2,0.25)
-  names_quant <- list(
-    "quantiles (5%)",
-    "quantiles (10%)",
-    "quantiles (15%)",
-    "quantiles (20%)",
-    "quantiles (25%)"
-  )
-  for(i in 1:length(list_quantile_sub)){
-    groups <- get_groups_quantile(residuals,list_quantile_sub[[i]],list_quantile_sup[[i]],is_resilience_positive=resilience_sign)
-    df_n_groups <- rbind(df_n_groups,
-                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_quant[[i]])))
-    df_result[[names_quant[[i]]]] <- groups
-  }
-  
-  # Standard deviation
-  list_sd_multiplicator <- list(2,1,0.5)
-  names_sd <- list("2SD","1SD","0.5SD")
-  for(i in 1:length(list_sd_multiplicator)){
-    groups <- get_groups_sd(df, residuals, bins, adversity_string, resilience_sign, sd_multiplicator=list_sd_multiplicator[[i]])$groups_sd
-    df_n_groups <- rbind(df_n_groups,
-                         data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c(names_sd[[i]])))
-    df_result[[names_sd[[i]]]] <- groups
-  }
-  
-  # Kmeans
-  groups <- get_groups_kmeans(df, residuals,resilience_sign,outcome_string = outcome_string,adversity_string = adversity_string)
-  df_n_groups <- rbind(df_n_groups,
-                       data.frame(resilient = sum(groups=="resilient", na.rm=TRUE), average = sum(groups=="average", na.rm=TRUE), vulnerable = sum(groups=="vulnerable", na.rm=TRUE), row.names=c("kmeans residuals only")))
-  df_result[["kmeans residuals only"]] <- groups
   return(list(df_result=df_result,df_n_groups=df_n_groups))
 }
 
+
+## !! Commands ####
 groups_to_test <- list("quantiles (5%)",
                        "quantiles (10%)",
                        "quantiles (15%)",
+                       "quantiles (20%)",
                        "quantiles (25%)",
                        "pred. residuals (75%)",
                        "pred. residuals (60%)",
                        "pred. residuals (50%)",
+                       "conf. residuals (99%)",
+                       "conf. residuals (95%)",
+                       "cred. 99.9%",
+                       "cred. 99%",
+                       "cred. 95%",
+                       "cred. 90%",
+                       "cred. 75%",
+                       "cred. 50%",
+                       "2SD",
+                       "1SD",
+                       "0.5SD",
                        "kmeans residuals only")
-
-
+groups_to_test_small <- list("quantiles (5%)",
+                             "quantiles (10%)",
+                             "quantiles (15%)",
+                             "quantiles (20%)",
+                             "quantiles (25%)",
+                             "pred. residuals (75%)",
+                             "pred. residuals (60%)",
+                             "pred. residuals (50%)",
+                             "2SD",
+                             "1SD",
+                             "0.5SD",
+                             "kmeans residuals only")
 # Dataframes with all the values
 vars <- c("T1_SF_14_PHC", "T1_SES_total", "T1_BDI_II", "T1_CPTS")
 
@@ -1281,7 +1250,7 @@ outcome_string <- "T1_BDI_II"
 bins <- bins_CPTS
 res_depression <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 residuals_depression <- res_depression$residuals_adjusted
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression)
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_depression)
 depression_df_result <- result_all_groups$df_result
 
 # Health
@@ -1289,7 +1258,7 @@ outcome_string <- "T1_SF_14_PHC"
 bins <- bins_CPTS
 res_health <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 residuals_health <- res_health$residuals_adjusted
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_health)
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_health)
 health_df_result <- result_all_groups$df_result
 
 # School Engagement
@@ -1297,28 +1266,28 @@ outcome_string <- "T1_SES_total_SA"
 bins <- bins_CPTS
 res_school <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 residuals_school <- res_school$residuals_adjusted
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_school)
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_school)
 school_df_result <- result_all_groups$df_result
 
-## Impact of multiplying / dividing ####
+## !! Impact of multiplying / dividing ####
 outcome_string <- "T1_BDI_II"
 bins <- bins_CPTS
 res_depression <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
 residuals_depression <- res_depression$residuals_adjusted
 # Nothing
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification="nothing")
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_depression,modification="nothing")
 grouping_nothing <- result_all_groups$df_n_groups
 # Multiply
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification="multiply")
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_depression,modification="multiply")
 grouping_multiply <- result_all_groups$df_n_groups
 #Multiply and divide
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification="multiply_divide")
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_depression,modification="multiply_divide")
 grouping_multiply_divide <- result_all_groups$df_n_groups
 # log multiply and divide
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification="log_multiply_divide")
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_depression,modification="log_multiply_divide")
 grouping_log_multiply_divide <- result_all_groups$df_n_groups
 
-## LPA ####
+## !! LPA ####
 # Function to transform the residuals methods -> "log_multiply", "multiply_divide","log_multiply" or whathever to just multiply.
 transformed_residuals <- function(df_result,group_name,method="log_multiply_divide"){
   res <- c()
@@ -1409,7 +1378,7 @@ LPA_result<-profile_estimation_LPA(depression_df_result,health_df_result,school_
                   method="nothing",list(3,4,5,6,7,8,9,10))
 View(LPA_result)
 
-## LCA ####
+## !! LCA ####
 profile_estimation_LCA <- function(depression_df_result,health_df_result,school_df_result,list_group_names,list_classes){
   
   # Initialize the result dataframe
@@ -1461,41 +1430,7 @@ profile_estimation_LCA <- function(depression_df_result,health_df_result,school_
 LCA_result<-profile_estimation_LCA(depression_df_result,health_df_result,school_df_result,groups_to_test,list(2,3))
 View(LCA_result)
 
-## Classification ####
-vars <- c("T1_SF_14_PHC", "T1_SES_total", "T1_BDI_II", "T1_CPTS","T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))
-
-df_SA_LPA <- df_SA[complete.cases(df_SA[, vars]), ]
-df_CA_LPA <- df_CA[complete.cases(df_CA[, vars]), ]
-
-# We choose the SA dataset because it's larger 366 > 236.
-df <- df_SA_LPA
-
-adversity_string <- "T1_CPTS"
-
-# Depression 
-outcome_string <- "T1_BDI_II"
-bins <- bins_CPTS
-res_depression <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
-residuals_depression <- res_depression$residuals_adjusted
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression)
-depression_df_result <- result_all_groups$df_result
-
-# Health
-outcome_string <- "T1_SF_14_PHC"
-bins <- bins_CPTS
-res_health <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
-residuals_health <- res_health$residuals_adjusted
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_health)
-health_df_result <- result_all_groups$df_result
-
-# School Engagement
-outcome_string <- "T1_SES_total_SA"
-bins <- bins_CPTS
-res_school <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
-residuals_school <- res_school$residuals_adjusted
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_school)
-school_df_result <- result_all_groups$df_result
-
+## Functions : classification ####
 classification_metrics <- function(true_labels, predicted_labels) {
   # Convert to factors with same levels
   levels <- c("resilient", "average", "vulnerable")
@@ -1566,9 +1501,8 @@ classification_metrics <- function(true_labels, predicted_labels) {
   return(results)
 }
 
-estimation_classification <- function(df,df_result,item_name,list_group_names,method="Naive_Bayes"){
+estimation_classification <- function(df,df_result,item_name,list_group_names,method="classification_tree",predictors=c("T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))){
   set.seed(1) # For reproductibility
-  predictors <- c("T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))
   res <- data.frame()
   
   for(i in 1:length(list_group_names)){
@@ -1631,34 +1565,8 @@ estimation_classification <- function(df,df_result,item_name,list_group_names,me
   return(res)
 }
 
-
-# Depression results
-depression_classification_result_tree <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="classification_tree")
-depression_classification_result_LDA <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="LDA")
-depression_classification_result_NB <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="Naive_Bayes")
-depression_classification_result_Logistic <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="Logistic_Regression")
-
-# Health results
-health_classification_result_tree <- estimation_classification(df,health_df_result,"health", groups_to_test,method="classification_tree")
-health_classification_result_LDA <- estimation_classification(df,health_df_result,"health", groups_to_test,method="LDA")
-health_classification_result_NB <- estimation_classification(df,health_df_result,"health", groups_to_test,method="Naive_Bayes")
-health_classification_result_Logistic <- estimation_classification(df,health_df_result,"health", groups_to_test,method="Logistic_Regression")
-
-# School results
-school_classification_result_tree <- estimation_classification(df,school_df_result,"school", groups_to_test,method="classification_tree")
-school_classification_result_LDA <- estimation_classification(df,school_df_result,"school", groups_to_test,method="LDA")
-school_classification_result_NB <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Naive_Bayes")
-school_classification_result_Logistic <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Logistic_Regression")
-
-
-# See if using the log_multiply_divide transformation helps
-result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bins,res_depression,modification ="log_multiply_divide")
-depression_df_result_log_multiply_divide <- result_all_groups$df_result
-depression_classification_result_tree_log_multiply_divide <- estimation_classification(df,depression_df_result_log_multiply_divide,"depression", groups_to_test,method="classification_tree")
-
-estimation_classification_tree_with_test <- function(df, df_result, item_name, list_group_names, n_perm = 100) {
+estimation_classification_tree_with_test <- function(df, df_result, item_name, list_group_names, n_perm = 100, predictors=c("T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))) {
   set.seed(1) # For reproducibility
-  predictors <- c("T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))
   res <- data.frame()
   
   for (i in seq_along(list_group_names)) {
@@ -1714,6 +1622,67 @@ estimation_classification_tree_with_test <- function(df, df_result, item_name, l
 }
 
 
+## !! Commands for classification ####
+vars <- c("T1_SF_14_PHC", "T1_SES_total", "T1_BDI_II", "T1_CPTS","T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))
+
+df_SA_LPA <- df_SA[complete.cases(df_SA[, vars]), ]
+df_CA_LPA <- df_CA[complete.cases(df_CA[, vars]), ]
+
+# We choose the SA dataset because it's larger 366 > 236.
+df <- df_SA_LPA
+
+adversity_string <- "T1_CPTS"
+
+# Depression 
+outcome_string <- "T1_BDI_II"
+bins <- bins_CPTS
+res_depression <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_depression <- res_depression$residuals_adjusted
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_depression)
+depression_df_result <- result_all_groups$df_result
+
+# Health
+outcome_string <- "T1_SF_14_PHC"
+bins <- bins_CPTS
+res_health <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_health <- res_health$residuals_adjusted
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_health)
+health_df_result <- result_all_groups$df_result
+
+# School Engagement
+outcome_string <- "T1_SES_total_SA"
+bins <- bins_CPTS
+res_school <- adjusted_fit(df=df,adversity=adversity_string,outcome=outcome_string)
+residuals_school <- res_school$residuals_adjusted
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_school)
+school_df_result <- result_all_groups$df_result
+
+#### with p-value test
+
+# Depression results
+depression_classification_result_tree <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="classification_tree")
+depression_classification_result_LDA <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="LDA")
+depression_classification_result_NB <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="Naive_Bayes")
+depression_classification_result_Logistic <- estimation_classification(df,depression_df_result,"depression", groups_to_test,method="Logistic_Regression")
+
+# Health results
+health_classification_result_tree <- estimation_classification(df,health_df_result,"health", groups_to_test,method="classification_tree")
+health_classification_result_LDA <- estimation_classification(df,health_df_result,"health", groups_to_test,method="LDA")
+health_classification_result_NB <- estimation_classification(df,health_df_result,"health", groups_to_test,method="Naive_Bayes")
+health_classification_result_Logistic <- estimation_classification(df,health_df_result,"health", groups_to_test,method="Logistic_Regression")
+
+# School results
+school_classification_result_tree <- estimation_classification(df,school_df_result,"school", groups_to_test,method="classification_tree")
+school_classification_result_LDA <- estimation_classification(df,school_df_result,"school", groups_to_test,method="LDA")
+school_classification_result_NB <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Naive_Bayes")
+school_classification_result_Logistic <- estimation_classification(df,school_df_result,"school", groups_to_test,method="Logistic_Regression")
+
+
+# See if using the log_multiply_divide transformation helps
+result_all_groups <- get_all_groups(df,adversity_string,outcome_string,bins,res_depression,modification ="log_multiply_divide")
+depression_df_result_log_multiply_divide <- result_all_groups$df_result
+depression_classification_result_tree_log_multiply_divide <- estimation_classification(df,depression_df_result_log_multiply_divide,"depression", groups_to_test,method="classification_tree")
+
 depression_classification_result_tree_with_test <- estimation_classification_tree_with_test(df,depression_df_result,"depression", groups_to_test, n_perm = 500)
 school_classification_result_tree_with_test <- estimation_classification_tree_with_test(df,school_df_result,"school", groups_to_test, n_perm = 500)
 health_classification_result_tree_with_test <- estimation_classification_tree_with_test(df,health_df_result,"health", groups_to_test, n_perm = 500)
@@ -1727,6 +1696,7 @@ dim(df_SA)
 # Variables used
 residuals_vars <- c("T1_SES_total_SA","T1_WES_total", "T1_BDI_II","T1_edu_1a")
 explication_vars <- c("T1_Sex","T1_Age",paste0("T1_CYRM_", 1:28),paste0("T1_PoNS_",1:8),paste0("T1_SF15_",1:15),paste0("T1_CPTS_",1:20),paste0("T1_FAS_",1:9),paste0("T1_BCE_",1:10))
+#explication_vars_sum <- c("T1_Sex","T1_Age","T1_CYRM28_total","T1_PoNS","T1_SF_14_PHC","T1_CPTS","T1_FAS","T1_BCE")
 
 # Dataframe with SES or WES + pertinent variables
 df_SAr <- df_SA[(!is.na(df_SA$T1_SES_total_SA)|!is.na(df_SA$T1_WES_total)) & !is.na(df_SA$T1_BDI_II)&!is.na(df_SA$T1_CYRM_10),c(residuals_vars,explication_vars)]
@@ -1739,8 +1709,7 @@ df_SAr_wtWESSES.mf <- missForest::missForest(xmis = df_SAr_wtWESSES)
 df_SAr[,explication_vars] <- df_SAr_wtWESSES.mf$ximp
 #visdat::vis_miss(df_SAr)
 
-# Engagement variable
-  # Put SES and WES on a 0 to 100 scale
+# Creation of the engagement variable
 n <- nrow(df_SAr)
 for(i in 1:n){
   if(is.na(df_SAr[i,"T1_WES_total"])){
@@ -1761,22 +1730,7 @@ for(i in 1:n){
 
 View(df_SAr)
 
-# PCA/EFA on Perception of Neighborhood
-
-res.PCA<-PCA(df_SAr[, c(paste0("T1_PoNS_", 1:8))],graph=FALSE)
-res.PCA$eig
-fviz_screeplot(X=res.PCA, addlabels = TRUE, ylim = c(0, 50))
-fviz_pca_var(res.PCA, axes = 1 :2,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
-fviz_pca_var(res.PCA, axes = 3:4,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
-corrplot(cor(df_SAr[, c(paste0("T1_PoNS_", 1:8))]))
-
-#Comments : We can see two groups emerge for the variable : 
-# 1,2,4,5,7 which are positively correlated together and are characterized by relatively big value on dim1 and small positive value on dim2. We don't see the group again on dim 3 and 4. 
-# 3, 6 and 8 which are positively correlated together and are characterized by a small negative value on dim1 and a relatively big value on dim2. Again we don't see this grouping again.
-# Good to note that questions 3,6 and 8 are the questions that need to be "reversed".
-# The two groups are at a 90° angle which would mean a small correlation between them.
-
-# Groupings for each method
+# Groupings for each method : df_result with groups and df_n_groups with sizes
 df <- df_SAr
 adversity_string <- "T1_BDI_II"
 outcome_string <- "T1_Engagement"
@@ -1787,28 +1741,89 @@ lm_adjusted <- res$lm_adjusted
 lm_adjusted_cred <- res$lm_adjusted_cred
 residuals <- res$residuals_adjusted
 
-all_groups_BDI_Engagement <- get_all_groups(df,adversity_string,outcome_string,bins,res,modification="nothing")
+all_groups_BDI_Engagement <- get_all_groups(df,adversity_string,outcome_string,bins,res,modification="nothing",visualization = TRUE)
 df_result_BDI_Engagement <- all_groups_BDI_Engagement$df_result
 df_n_groups_BDI_Engagement <- all_groups_BDI_Engagement$df_n_groups
 
-# Visualization
-visualization_raw_residuals(df,adversity_string,outcome_string,lm_adjusted,df_result_BDI_Engagement$raw)
-visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted,preds_conf,names_conf,main="Confidence and prediction intervals")
-visualization_intervals(df=df,adversity=adversity_string,outcome=outcome_string,adjusted_lm =lm_adjusted_cred,preds_cred,names_cred,main="Credibility intervals")
-visualization_sd_intervals(df,adversity=adversity_string,outcome=outcome_string,adjusted_lm=lm_adjusted,bins=bins,res=res,main="SD Intervals")
-qqnorm(residuals)
-qqline(residuals)
-visualization_groups(df,adversity_string,outcome_string,lm_adjusted,groups_kmeans_residuals_only,main="Kmeans residuals only")
+View(df_result_BDI_Engagement)
+View(df_n_groups_BDI_Engagement)
 
 # Classification
-# Need to change the predictors included inside of the classification
-estimation_classification_tree_with_test(df,df_result_BDI_Engagement,"Engagement",groups_to_test,n_perm=500)
+groups_to_test <- list("quantiles (5%)",
+                       "quantiles (10%)",
+                       "quantiles (15%)",
+                       "quantiles (20%)",
+                       "quantiles (25%)",
+                       "pred. residuals (75%)",
+                       "pred. residuals (60%)",
+                       "pred. residuals (50%)",
+                       "conf. residuals (99%)",
+                       "conf. residuals (95%)",
+                       "cred. 99.9%",
+                       "cred. 99%",
+                       "cred. 95%",
+                       "cred. 90%",
+                       "cred. 75%",
+                       "cred. 50%",
+                       "2SD",
+                       "1SD",
+                       "0.5SD",
+                       "Kmeans")
+groups_to_test_small <- list("quantiles (5%)",
+                             "quantiles (10%)",
+                             "quantiles (15%)",
+                             "quantiles (20%)",
+                             "quantiles (25%)",
+                             "pred. residuals (75%)",
+                             "pred. residuals (60%)",
+                             "pred. residuals (50%)",
+                             "2SD",
+                             "1SD",
+                             "0.5SD",
+                             "Kmeans")
+df_perf_classification_tree <- estimation_classification_tree_with_test(df,df_result_BDI_Engagement,"Engagement",groups_to_test,n_perm=100,predictors = explication_vars)
+
+
+# PCA/EFA on Perception of Neighborhood
+res.PCA<-PCA(df_SAr[, c(paste0("T1_PoNS_", 1:8))],graph=FALSE)
+res.PCA$eig
+fviz_screeplot(X=res.PCA, addlabels = TRUE, ylim = c(0, 50))
+fviz_pca_var(res.PCA, axes = 1 :2,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+fviz_pca_var(res.PCA, axes = 3:4,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+corrplot(cor(df_SAr[, c(paste0("T1_PoNS_", 1:8))]))
+#Comments : We can see two groups emerge for the variable : 
+# 1,2,4,5,7 which are positively correlated together and are characterized by relatively big value on dim1 and small positive value on dim2. We don't see the group again on dim 3 and 4. 
+# 3, 6 and 8 which are positively correlated together and are characterized by a small negative value on dim1 and a relatively big value on dim2. Again we don't see this grouping again.
+# Good to note that questions 3,6 and 8 are the questions that need to be "reversed".
+# The two groups are at a 90° angle which would mean a small correlation between them.
 
 # LPA for engagement and BDI
-profile_estimated <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
   dplyr::select(T1_BDI_II, T1_Engagement) %>%
   single_imputation() %>%
   estimate_profiles(2:6, 
                     variances = c("equal","varying","equal"),
-                    covariances = c("zero","zero","equal"),nrep = 5)
+                    covariances = c("zero","zero","equal"),nrep = 5) %>%
+  compare_solutions(statistics = c("AIC", "BIC"))
+# Best model according to AIC is Model 3 with 5 classes.
+df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(5,variances=c("equal"),covariances=c("equal")) %>% 
+  plot_profiles()
+# Best model according to BIC is Model 1 with 3 classes.
+df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(3,variances=c("equal"),covariances=c("zero")) %>% 
+  plot_profiles()
+# Best model according to analytic hierarchy process is Model 2 with 3 classes.
+df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(3,variances=c("varying"),covariances=c("zero")) %>% 
+  plot_profiles()
 
+
+# Regression tree to predict transformed residuals
+# Regression tree to predict residuals
