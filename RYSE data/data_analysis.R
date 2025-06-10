@@ -5,6 +5,9 @@ library(car) # lm testing
 library(caret) # confusion matrix
 library(dplyr) 
 library(e1071) #NB
+library(factoextra) # PCA
+library(FactoMineR) # PCA
+library(Factoshiny) # PCA
 library(ggplot2) # ploting
 library(generics)
 library(haven) # read sav data
@@ -18,6 +21,9 @@ library(rstanarm) # bayesian lm
 library(sandwich) # lm testing
 library(tidyLPA) # LPA
 library(tidymodels) # multiclass classification regression
+
+library(corrr)
+library(corrplot)
 
 
 ## Import master dataset #####
@@ -1650,11 +1656,6 @@ result_all_groups <- get_all_groups_small(df,adversity_string,outcome_string,bin
 depression_df_result_log_multiply_divide <- result_all_groups$df_result
 depression_classification_result_tree_log_multiply_divide <- estimation_classification(df,depression_df_result_log_multiply_divide,"depression", groups_to_test,method="classification_tree")
 
-
-
-
-library(rpart)
-
 estimation_classification_tree_with_test <- function(df, df_result, item_name, list_group_names, n_perm = 100) {
   set.seed(1) # For reproducibility
   predictors <- c("T1_Sex", "T1_Age", paste0("T1_CYRM_", 1:28))
@@ -1720,7 +1721,7 @@ View(depression_classification_result_tree_with_test)
 View(school_classification_result_tree_with_test)
 View(health_classification_result_tree_with_test)
 
-## PART II : Engagement depending on BDI-II
+## PART II : Engagement depending on BDI-II ####
 dim(df_SA)
 
 # Variables used
@@ -1740,32 +1741,27 @@ df_SAr[,explication_vars] <- df_SAr_wtWESSES.mf$ximp
 
 # Engagement variable
   # Put SES and WES on a 0 to 100 scale
-  n <- nrow(df_SAr)
-  for(i in 1:n){
-    if(is.na(df_SAr[i,"T1_WES_total"])){
+n <- nrow(df_SAr)
+for(i in 1:n){
+  if(is.na(df_SAr[i,"T1_WES_total"])){
+    df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_SES_total_SA"]-33)/(165-33)*100
+  }
+  else if(is.na(df_SAr[i,"T1_SES_total_SA"])){
+    df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_WES_total"]-9)/(63-9)*100
+  }
+  else{# If both are not NA
+    if(df_SAr[i,"T1_edu_1a"] %in% 9:12){
       df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_SES_total_SA"]-33)/(165-33)*100
     }
-    else if(is.na(df_SAr[i,"T1_SES_total_SA"])){
-      df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_WES_total"]-9)/(63-9)*100
-    }
-    else{# If both are not NA
-      if(df_SAr[i,"T1_edu_1a"] %in% 9:12){
-        df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_SES_total_SA"]-33)/(165-33)*100
-      }
-      else{
-        df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_SES_total_SA"]-33)/(165-33)*100
-      }
+    else{
+      df_SAr[i,"T1_Engagement"] <- (df_SAr[i,"T1_SES_total_SA"]-33)/(165-33)*100
     }
   }
+}
 
 View(df_SAr)
 
 # PCA/EFA on Perception of Neighborhood
-library(FactoMineR)
-library(factoextra)
-library(Factoshiny)
-library(corrr)
-library(corrplot)
 
 res.PCA<-PCA(df_SAr[, c(paste0("T1_PoNS_", 1:8))],graph=FALSE)
 res.PCA$eig
