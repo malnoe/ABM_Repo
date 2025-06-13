@@ -1733,6 +1733,49 @@ for(i in 1:n){
 
 View(df_SAr)
 
+# PCA/EFA on Perception of Neighborhood
+res.PCA<-PCA(df_SAr[, c(paste0("T1_PoNS_", 1:8))],graph=FALSE)
+res.PCA$eig
+fviz_screeplot(X=res.PCA, addlabels = TRUE, ylim = c(0, 50))
+fviz_pca_var(res.PCA, axes = 1 :2,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+fviz_pca_var(res.PCA, axes = 3:4,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+corrplot(cor(df_SAr[, c(paste0("T1_PoNS_", 1:8))]))
+#Comments : We can see two groups emerge for the variable : 
+# 1,2,4,5,7 which are positively correlated together and are characterized by relatively big value on dim1 and small positive value on dim2. We don't see the group again on dim 3 and 4. 
+# 3, 6 and 8 which are positively correlated together and are characterized by a small negative value on dim1 and a relatively big value on dim2. Again we don't see this grouping again.
+# Good to note that questions 3,6 and 8 are the questions that need to be "reversed".
+# The two groups are at a 90° angle which would mean a small correlation between them.
+
+# LPA for engagement and BDI
+df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(2:6, 
+                    variances = c("equal","varying","equal"),
+                    covariances = c("zero","zero","equal"),nrep = 5) %>%
+  compare_solutions(statistics = c("AIC", "BIC"))
+# Best model according to AIC is Model 3 with 5 classes.
+plot_3_5 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(5,variances=c("equal"),covariances=c("equal")) %>% 
+  plot_profiles()
+# Best model according to BIC is Model 1 with 3 classes.
+plot_1_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(3,variances=c("equal"),covariances=c("zero")) %>% 
+  plot_profiles()
+# Best model according to analytic hierarchy process is Model 2 with 3 classes.
+plot_2_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(3,variances=c("varying"),covariances=c("zero")) %>% 
+  plot_profiles()
+
+grid.arrange(plot_3_5,plot_1_3,plot_2_3, ncol = 3)
+
+
 # Groupings for each method : df_result with groups and df_n_groups with sizes
 df <- df_SAr
 adversity_string <- "T1_BDI_II"
@@ -1786,49 +1829,8 @@ groups_to_test_small <- list("quantiles (5%)",
                              "1SD",
                              "0.5SD",
                              "Kmeans")
-df_perf_classification_tree <- estimation_classification_tree_with_test(df,df_result_BDI_Engagement,"Engagement",groups_to_test,n_perm=100,predictors = explication_vars)
+df_perf_classification_tree <- estimation_classification_tree_with_test(df,df_result_BDI_Engagement,"Engagement",groups_to_test,n_perm=500,predictors = explication_vars)
 
-# PCA/EFA on Perception of Neighborhood
-res.PCA<-PCA(df_SAr[, c(paste0("T1_PoNS_", 1:8))],graph=FALSE)
-res.PCA$eig
-fviz_screeplot(X=res.PCA, addlabels = TRUE, ylim = c(0, 50))
-fviz_pca_var(res.PCA, axes = 1 :2,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
-fviz_pca_var(res.PCA, axes = 3:4,col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
-corrplot(cor(df_SAr[, c(paste0("T1_PoNS_", 1:8))]))
-#Comments : We can see two groups emerge for the variable : 
-# 1,2,4,5,7 which are positively correlated together and are characterized by relatively big value on dim1 and small positive value on dim2. We don't see the group again on dim 3 and 4. 
-# 3, 6 and 8 which are positively correlated together and are characterized by a small negative value on dim1 and a relatively big value on dim2. Again we don't see this grouping again.
-# Good to note that questions 3,6 and 8 are the questions that need to be "reversed".
-# The two groups are at a 90° angle which would mean a small correlation between them.
-
-# LPA for engagement and BDI
-df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
-  dplyr::select(T1_BDI_II, T1_Engagement) %>%
-  single_imputation() %>%
-  estimate_profiles(2:6, 
-                    variances = c("equal","varying","equal"),
-                    covariances = c("zero","zero","equal"),nrep = 5) %>%
-  compare_solutions(statistics = c("AIC", "BIC"))
-# Best model according to AIC is Model 3 with 5 classes.
-plot_3_5 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
-  dplyr::select(T1_BDI_II, T1_Engagement) %>%
-  single_imputation() %>%
-  estimate_profiles(5,variances=c("equal"),covariances=c("equal")) %>% 
-  plot_profiles()
-# Best model according to BIC is Model 1 with 3 classes.
-plot_1_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
-  dplyr::select(T1_BDI_II, T1_Engagement) %>%
-  single_imputation() %>%
-  estimate_profiles(3,variances=c("equal"),covariances=c("zero")) %>% 
-  plot_profiles()
-# Best model according to analytic hierarchy process is Model 2 with 3 classes.
-plot_2_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
-  dplyr::select(T1_BDI_II, T1_Engagement) %>%
-  single_imputation() %>%
-  estimate_profiles(3,variances=c("varying"),covariances=c("zero")) %>% 
-  plot_profiles()
-
-grid.arrange(plot_3_5,plot_1_3,plot_2_3, ncol = 3)
 
 # Function to modify the residuals depending on the group
 transformed_residuals <- function(df_result,group_name,method="nothing"){
@@ -1919,7 +1921,8 @@ regression_tree <- function(df,df_result,list_group_names,predictors=explication
   }
   return(res)
 }
-# Regression tree to predict transformed residuals
+
+# Regression tree to predict raw residuals
 df_perf_regression_tree <- regression_tree(df,df_result_BDI_Engagement,groups_to_test,predictors = explication_vars,method = "nothing")
 
 # Visualization of the result
@@ -1952,4 +1955,36 @@ plot_error <- ggplot(df_long, aes(x = average_group_size, y = value, color = met
 
 grid.arrange(plot_performance, plot_error, ncol = 2)
 
+# Regression tree to predict transformation residuals
+df_perf_regression_tree_multiplication <- regression_tree(df,df_result_BDI_Engagement,groups_to_test,predictors = explication_vars,method = "log_multiply")
+
+# Visualization of the result
+df_long <- df_perf_regression_tree_multiplication %>%
+  pivot_longer(cols = c(R.squared, R.squared.adjusted),
+               names_to = "metric",
+               values_to = "value")
+plot_performance_multiply <- ggplot(df_long, aes(x = average_group_size, y = value, color = metric)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Performance Metrics vs. Group Size",
+       x = "Average Group Size",
+       y = "Performance",
+       color = "Metric") +
+  theme_minimal()
+
+df_long <- df_perf_regression_tree_multiplication %>%
+  pivot_longer(cols = c(MAE,RMSE),
+               names_to = "metric",
+               values_to = "value")
+plot_error_multiply <- ggplot(df_long, aes(x = average_group_size, y = value, color = metric)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Performance Metrics vs. Group Size",
+       x = "Average Group Size",
+       y = "Error",
+       color = "Metric") +
+  theme_minimal()
+
+
+grid.arrange(plot_performance_multiply, plot_error_multiply, ncol = 2)
 
