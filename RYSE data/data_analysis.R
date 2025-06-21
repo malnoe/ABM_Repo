@@ -1543,11 +1543,13 @@ estimation_classification <- function(df,df_result,item_name,list_group_names,me
     
     # Metrics
     metrics <- classification_metrics(df[["groups"]],predictions)
+    null_model <- max(metrics$support[["average"]],metrics$support[["resilient"]],metrics$support[["vulnerable"]]) / (metrics$support[["resilient"]]+metrics$support[["average"]]+metrics$support[["vulnerable"]])
     
     res <- rbind(res, data.frame(
       group_name = group_name,
       accuracy = metrics$accuracy[[1]],
-      null_model = metrics$support[["average"]] / (metrics$support[["resilient"]]+metrics$support[["average"]]+metrics$support[["vulnerable"]]),
+      null_model = null_model,
+      difference = metrics$accuracy[[1]]-null_model,
       macro_precision = metrics$macro_precision[[1]],
       macro_recall = metrics$macro_recall[[1]],
       macro_f1 = metrics$macro_f1[[1]],
@@ -1598,11 +1600,15 @@ estimation_classification_tree_with_test <- function(df, df_result, item_name, l
     }
     p_value <- mean(perm_accuracies >= acc_obs)
     
+    
+    null_model <- max(metrics$support[["average"]],metrics$support[["resilient"]],metrics$support[["vulnerable"]]) / sum(unlist(metrics$support))
+    
     # Add the result to the global dataframe
     res <- rbind(res, data.frame(
       group_name = group_name,
       accuracy = acc_obs,
-      null_model = metrics$support[["average"]] / sum(unlist(metrics$support)),
+      null_model = null_model,
+      difference = acc_obs-null_model,
       p_value_permutation = p_value,
       macro_precision = metrics$macro_precision[[1]],
       macro_recall = metrics$macro_recall[[1]],
@@ -1702,7 +1708,7 @@ explication_vars <- c("T1_Sex","T1_Age",paste0("T1_CYRM_", 1:28),paste0("T1_PoNS
 #explication_vars_sum <- c("T1_Sex","T1_Age","T1_CYRM28_total","T1_PoNS","T1_SF_14_PHC","T1_CPTS","T1_FAS","T1_BCE")
 
 # Dataframe with SES or WES + pertinent variables
-df_SAr <- df_SA[(!is.na(df_SA$T1_SES_total_SA)|!is.na(df_SA$T1_WES_total)) & !is.na(df_SA$T1_BDI_II)&!is.na(df_SA$T1_CYRM_10),c(residuals_vars,explication_vars)]
+df_SAr <- df_SA[(!is.na(df_SA$T1_SES_total_SA)|!is.na(df_SA$T1_WES_total)) & !is.na(df_SA$T1_BDI_II)&!is.na(df_SA$T1_CYRM_10),c(residuals_vars,explication_vars,"Master_ID")]
 dim(df_SAr) # 423 individuals
 
 # Impute data 
@@ -1754,24 +1760,51 @@ df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
                     variances = c("equal","varying","equal"),
                     covariances = c("zero","zero","equal"),nrep = 5) %>%
   compare_solutions(statistics = c("AIC", "BIC"))
+
 # Best model according to AIC is Model 3 with 5 classes.
-plot_3_5 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+model_3_5 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
   dplyr::select(T1_BDI_II, T1_Engagement) %>%
   single_imputation() %>%
-  estimate_profiles(5,variances=c("equal"),covariances=c("equal")) %>% 
+  estimate_profiles(5,variances=c("equal"),covariances=c("equal"))
+
+plot_3_5 <-  df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(5,variances=c("equal"),covariances=c("equal")) %>%
   plot_profiles()
+
+data_model_3_5 <- get_data(model_3_5)
+table(data_model_3_5$Class)/423*100
+
 # Best model according to BIC is Model 1 with 3 classes.
+model_1_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(3,variances=c("equal"),covariances=c("zero"))
+
 plot_1_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
   dplyr::select(T1_BDI_II, T1_Engagement) %>%
   single_imputation() %>%
   estimate_profiles(3,variances=c("equal"),covariances=c("zero")) %>% 
   plot_profiles()
+
+data_model_1_3 <- get_data(model_1_3)
+table(data_model_1_3$Class)/423*100
+
 # Best model according to analytic hierarchy process is Model 2 with 3 classes.
+model_2_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
+  dplyr::select(T1_BDI_II, T1_Engagement) %>%
+  single_imputation() %>%
+  estimate_profiles(3,variances=c("varying"),covariances=c("zero"))
+
 plot_2_3 <- df_SAr[,c("T1_BDI_II","T1_Engagement")] %>%
   dplyr::select(T1_BDI_II, T1_Engagement) %>%
   single_imputation() %>%
   estimate_profiles(3,variances=c("varying"),covariances=c("zero")) %>% 
   plot_profiles()
+
+data_model_2_3 <- get_data(model_2_3)
+table(data_model_2_3$Class)/423*100
 
 grid.arrange(plot_3_5,plot_1_3,plot_2_3, ncol = 3)
 
@@ -1829,7 +1862,25 @@ groups_to_test_small <- list("quantiles (5%)",
                              "1SD",
                              "0.5SD",
                              "Kmeans")
-df_perf_classification_tree <- estimation_classification_tree_with_test(df,df_result_BDI_Engagement,"Engagement",groups_to_test,n_perm=500,predictors = explication_vars)
+df_perf_classification_tree <- estimation_classification_tree_with_test(df,df_result_BDI_Engagement,"Engagement",groups_to_test,n_perm=5,predictors = explication_vars)
+
+# Selection of the best grouping methods 
+# Criterias :
+# The average group size is at least 1/3 of the whole dataset -> >141
+# The model as to predict (rightfully or wrongfully) resilience -> recall >0
+# We want good precision and in second a good recall for the resilient group.
+criteria_index <- df_perf_classification_tree$support_average>=141&df_perf_classification_tree$recall_resilient>0
+df_perf_class_comparison <- df_perf_classification_tree[criteria_index,]
+
+ggplot(df_perf_class_comparison,aes(x=1-recall_resilient,y=precision_resilient,label=group_name))+
+  geom_point(shape=19,size=1.5)+
+  geom_text(hjust=-0.1, vjust=0,size=3)+
+  xlim(0,1)+
+  ylim(0,1)+
+  labs(title="Comparison of the grouping methods",
+       x="1- recall of the resilient group",
+       y= "precision of the resilient group")+
+  theme_minimal()
 
 
 # Function to modify the residuals depending on the group
@@ -1987,4 +2038,5 @@ plot_error_multiply <- ggplot(df_long, aes(x = average_group_size, y = value, co
 
 
 grid.arrange(plot_performance_multiply, plot_error_multiply, ncol = 2)
+
 
